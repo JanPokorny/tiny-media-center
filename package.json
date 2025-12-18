@@ -8,9 +8,20 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "dev": "concurrently \"vite\" \"wait-on tcp:5173 && NODE_ENV=development electron .\"",
+    "build": "vite build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
-    "electron": "^39.2.7"
+    "concurrently": "^9.2.1",
+    "electron": "^39.2.7",
+    "wait-on": "^9.0.3"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.2",
+    "fuse.js": "^7.1.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "vite": "^7.3.0"
   }
 }

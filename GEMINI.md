@@ -1,0 +1,2 @@
+- check spec/ for specification
+- use the folder with some example media files media/ for testing

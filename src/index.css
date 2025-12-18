@@ -1,0 +1,190 @@
+:root {
+  --bg-color: #000000;
+  --text-color: #aaaaaa;
+  --accent-color: #ffcc00;
+  --dim-text-color: #444444;
+  --font-family: 'Courier New', Courier, monospace;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: var(--font-family);
+  overflow: hidden;
+  user-select: none;
+  font-weight: bold;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 20px 30px;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  font-size: 2.5rem;
+  color: #666; /* Gray header text */
+  z-index: 10;
+}
+
+/* Footer */
+.footer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  padding: 20px 30px;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  font-size: 2.5rem;
+  color: #666;
+  z-index: 10;
+}
+
+.footer-left {
+  color: #666;
+}
+
+/* Main Menu */
+.main-menu {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  padding-left: 50px; /* Align left per new design */
+}
+
+.menu-list {
+  font-size: 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; /* Left align items */
+}
+
+.menu-item {
+  margin: 5px 0;
+  color: var(--text-color);
+}
+
+.menu-item.selected {
+  color: var(--accent-color);
+}
+
+/* Movie List */
+.movie-list-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.movie-list-viewport {
+  flex-grow: 1;
+  overflow: hidden;
+  position: relative;
+  /* Masking for fading effect at top/bottom */
+  mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%);
+}
+
+.movie-list {
+  display: flex;
+  flex-direction: column;
+  font-size: 2.5rem;
+  transition: transform 0.2s ease-out;
+  padding-left: 50px;
+}
+
+.movie-item {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-color);
+}
+
+.movie-item.selected {
+  color: var(--accent-color);
+}
+
+/* Player */
+.player-container {
+  width: 100vw;
+  height: 100vh;
+  background-color: #000;
+  position: relative;
+}
+
+.video-player {
+  width: 100%;
+  height: 100%;
+}
+
+.pause-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.85); /* Darker overlay */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Pause Menu Content */
+.pause-content {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-left: 50px;
+}
+
+.pause-menu-list {
+  font-size: 3rem;
+}
+
+.pause-item {
+  margin: 5px 0;
+  color: var(--text-color);
+}
+
+.pause-item.selected {
+  color: var(--accent-color);
+}
+
+.pause-header {
+  position: absolute;
+  top: 20px;
+  left: 30px;
+  font-size: 2.5rem;
+  color: #666;
+}
+
+/* Search input style */
+.search-input {
+  display: inline-block;
+  background: #667; /* Gray background for search box per typically UI */
+  color: white;
+  padding: 0 5px;
+}
