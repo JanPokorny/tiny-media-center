@@ -2,17 +2,19 @@ import React, { useState, useEffect } from 'react'
 import path from 'path-browserify'
 import MediaBrowser from './components/MediaBrowser'
 import Player from './components/Player'
+import ScriptPlayer from './components/ScriptPlayer'
 
 function App() {
   const [mediaTree, setMediaTree] = useState([])
   const [currentPath, setCurrentPath] = useState('')
   const [view, setView] = useState('BROWSER')
   const [selectedMovie, setSelectedMovie] = useState(null)
+  const [selectedScript, setSelectedScript] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function fetchMedia() {
-      const structure = await window.electronAPI.getMediaStructure()
+      const structure = await window.ipcRenderer.invoke('get-media-structure')
       setMediaTree(structure)
       setLoading(false)
     }
@@ -38,9 +40,12 @@ function App() {
   const handleSelect = (item) => {
     if (item.type === 'directory') {
       setCurrentPath(item.path)
-    } else {
+    } else if (item.type === 'file') {
       setSelectedMovie(item)
       setView('PLAYER')
+    } else if (item.type === 'script') {
+      setSelectedScript(item)
+      setView('SCRIPT_PLAYER')
     }
   }
 
@@ -77,6 +82,16 @@ function App() {
             onBack={() => {
               setView('BROWSER')
               setSelectedMovie(null)
+            }}
+          />
+        )
+      case 'SCRIPT_PLAYER':
+        return (
+          <ScriptPlayer
+            script={selectedScript}
+            onBack={() => {
+              setView('BROWSER')
+              setSelectedScript(null)
             }}
           />
         )

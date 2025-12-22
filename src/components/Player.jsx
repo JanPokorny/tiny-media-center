@@ -44,7 +44,7 @@ function Player({ movie, onBack }) {
       video.removeEventListener('ended', handleEnded)
       // Save progress on exit
       if (video.duration) {
-        window.electronAPI.saveMetadata(movie.path, { 
+        window.ipcRenderer.invoke('save-metadata', movie.path, { 
           watchedPercentage: video.currentTime / video.duration,
           lastTime: video.currentTime
         })

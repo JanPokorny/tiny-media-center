@@ -75,7 +75,7 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
             else if (distance > 5) color = '#333333';
             else if (distance > 2) color = '#666666';
 
-            const displayName = item.type === 'directory' ? `[ ${item.name} ]` : item.name;
+            const displayName = item.type === 'directory' ? `${item.name}/` : item.name;
 
             return (
               <div
