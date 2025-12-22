@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import path from 'path-browserify'
 import MediaBrowser from './components/MediaBrowser'
 import Player from './components/Player'
-import ScriptPlayer from './components/ScriptPlayer'
+import ScriptRunner from './components/ScriptRunner'
 
 function App() {
   const [mediaTree, setMediaTree] = useState([])
@@ -86,7 +86,7 @@ function App() {
       )
     case 'SCRIPT_PLAYER':
       return (
-        <ScriptPlayer
+        <ScriptRunner
           script={selectedScript}
           onBack={() => {
             setView('BROWSER')

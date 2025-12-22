@@ -3,7 +3,7 @@ import Header from './Header';
 import Footer from './Footer';
 import { useKeyboard } from '../hooks/useKeyboard';
 
-function ScriptPlayer({ script, onBack }) {
+function ScriptRunner({ script, onBack }) {
   const [output, setOutput] = useState('');
 
   useEffect(() => {
@@ -37,4 +37,4 @@ function ScriptPlayer({ script, onBack }) {
   );
 }
 
-export default ScriptPlayer;
+export default ScriptRunner;
