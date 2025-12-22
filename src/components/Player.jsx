@@ -18,6 +18,17 @@ function Player({ movie, onBack }) {
   const MENU_OPTIONS = ["unpause"]; // Keeping this for potential future expansion
 
   useEffect(() => {
+    const restoreProgress = () => {
+      const progressSeconds = videoRef.current.duration * parseFloat(localStorage.getItem(`video:${movie.fullPath}:progress`));
+      if (Number.isNaN(progressSeconds)) return;
+      videoRef.current.removeEventListener("playing", restoreProgress);
+      if (progressSeconds > videoRef.current.duration - 10) return;
+      videoRef.current.currentTime = Math.floor(progressSeconds);
+    }
+    videoRef.current?.addEventListener("playing", restoreProgress);
+  }, [videoRef])
+
+  useEffect(() => {
     const timer = setInterval(() => setClockTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -39,7 +50,18 @@ function Player({ movie, onBack }) {
     const handleEnded = () => onBack();
     video.addEventListener("ended", handleEnded);
     return () => video.removeEventListener("ended", handleEnded);
-  }, [])
+  }, [onBack])
+
+  useEffect(() => {
+    const progressInterval = setInterval(() => saveCurrentProgress(), 60000);
+    return () => clearInterval(progressInterval);
+  }, []);
+
+  const saveCurrentProgress = () => {
+    const video = videoRef?.current;
+    if (!video || video.duration <= 0) return;
+    localStorage.setItem(`video:${movie.fullPath}:progress`, (video.currentTime / video.duration).toString());
+  };
 
   const handleSkip = (direction) => {
     const video = videoRef.current;
@@ -71,17 +93,15 @@ function Player({ movie, onBack }) {
         setIsPaused(false);
       } else {
         setIsPaused(true);
-        setMenuIndex(0); // Reset for consistency, though not strictly needed with one option
+        // setMenuIndex(0);
       }
     },
     ArrowUp: () => {
       // With only one option, these keys effectively do nothing
-      if (isPaused) setMenuIndex((prev) => Math.max(0, prev - 1));
+      // if (isPaused) setMenuIndex((prev) => Math.max(0, prev - 1));
     },
     ArrowDown: () => {
-      // With only one option, these keys effectively do nothing
-      if (isPaused)
-        setMenuIndex((prev) => Math.min(MENU_OPTIONS.length - 1, prev + 1));
+      // if (isPaused) setMenuIndex((prev) => Math.min(MENU_OPTIONS.length - 1, prev + 1));
     },
     ArrowLeft: () => {
       if (!isPaused) handleSkip(-1);
@@ -91,11 +111,17 @@ function Player({ movie, onBack }) {
     },
     Escape: () => {
       if (isPaused) setIsPaused(false);
-      else onBack();
+      else {
+        saveCurrentProgress();
+        onBack();
+      }
     },
     BrowserBack: () => {
       if (isPaused) setIsPaused(false);
-      else onBack();
+      else {
+        saveCurrentProgress();
+        onBack();
+      }
     },
     " ": () => setIsPaused((prev) => !prev),
   });
