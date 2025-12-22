@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
-import Header from './Header';
-import Footer from './Footer';
 import { useKeyboard } from '../hooks/useKeyboard';
 
 function ScriptRunner({ script, onBack }) {
   const [output, setOutput] = useState('');
+  const [time, setTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     setOutput('');
@@ -28,11 +32,19 @@ function ScriptRunner({ script, onBack }) {
 
   return (
     <>
-      <Header title={`running ${script.name}`} />
+      <header>
+        <span>{`running ${script.name}`}</span>
+        <span>
+          {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+        </span>
+      </header>
       <pre className="script-output">
         {output}
       </pre>
-      <Footer leftText="press 'back' to exit" />
+      <footer>
+        <span>press 'back' to exit</span>
+        <span></span>
+      </footer>
     </>
   );
 }

@@ -56,22 +56,6 @@ async function getMediaStructure(currentPath = MEDIA_ROOT) {
   return structure;
 }
 
-async function saveMetadata(event, filePath, data) {
-  try {
-    const fullPath = path.isAbsolute(filePath)
-      ? filePath
-      : path.join(MEDIA_ROOT, filePath);
-    const parsedPath = path.parse(fullPath);
-    const metadataPath = path.join(parsedPath.dir, parsedPath.name + ".tsc");
-
-    await fs.writeFile(metadataPath, JSON.stringify(data));
-    return { success: true };
-  } catch (error) {
-    console.error("Error saving metadata:", error);
-    return { success: false, error: error.message };
-  }
-}
-
 app.whenReady().then(() => {
   const win = new BrowserWindow({
     show: false,
@@ -85,7 +69,6 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("get-media-structure", () => getMediaStructure());
-  ipcMain.handle("save-metadata", saveMetadata);
 
   ipcMain.on("run-script", (event, scriptPath) => {
     scriptProcess = spawn(path.join(MEDIA_ROOT, scriptPath), []);
@@ -122,7 +105,7 @@ app.whenReady().then(() => {
   }
 
   // Open the DevTools.
-  // win.webContents.openDevTools()
+  win.webContents.openDevTools();
 
   win.show();
 });

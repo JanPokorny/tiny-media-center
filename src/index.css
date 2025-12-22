@@ -29,7 +29,7 @@ body {
   flex-direction: column;
 }
 
-.header {
+header {
   position: absolute;
   top: 0;
   left: 0;
@@ -42,7 +42,7 @@ body {
   z-index: 10;
 }
 
-.footer {
+footer {
   position: absolute;
   bottom: 0;
   left: 0;
@@ -100,7 +100,6 @@ body {
   text-overflow: ellipsis;
 }
 
-/* Player */
 .player-container {
   width: 100vw;
   height: 100vh;

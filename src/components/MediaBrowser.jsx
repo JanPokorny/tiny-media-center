@@ -1,12 +1,16 @@
 import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
-import Header from './Header'
-import Footer from './Footer'
 import { useKeyboard } from '../hooks/useKeyboard'
 
 function MediaBrowser({ items, onSelect, onBack, currentPath }) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [filter, setFilter] = useState('')
+  const [time, setTime] = useState(new Date())
+
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   const filteredItems = useMemo(() => {
     if (!filter) return items
@@ -58,7 +62,12 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
 
   return (
     <div className="movie-list-container">
-      <Header title={currentFolderName} />
+      <header>
+        <span>{currentFolderName}</span>
+        <span>
+          {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+        </span>
+      </header>
       
       <div className="movie-list-viewport">
         <div 
@@ -83,7 +92,10 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
         </div>
       </div>
 
-      <Footer leftText={footerLeft} />
+      <footer>
+        <span>{footerLeft}</span>
+        <span></span>
+      </footer>
     </div>
   )
 }
