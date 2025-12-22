@@ -3,7 +3,7 @@ const path = require("path")
 const fs = require("fs").promises
 const { spawn } = require("child_process");
 
-const MEDIA_ROOT = path.join(__dirname, "media");
+const MEDIA_ROOT = process.env.TMC_MEDIA_PATH || path.join(__dirname, "media");
 const VIDEO_EXTENSIONS = new Set([
   ".mp4",
   ".mkv",
