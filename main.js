@@ -4,14 +4,6 @@ const fs = require("fs").promises
 const { spawn } = require("child_process");
 
 const MEDIA_ROOT = process.env.TMC_MEDIA_PATH || path.join(__dirname, "media");
-const VIDEO_EXTENSIONS = new Set([
-  ".mp4",
-  ".mkv",
-  ".avi",
-  ".mov",
-  ".wmv",
-  ".webm",
-]);
 
 let scriptProcess = null;
 
@@ -22,6 +14,7 @@ async function getMediaStructure(currentPath = MEDIA_ROOT) {
   for (const dirent of dirents) {
     const fullPath = path.join(currentPath, dirent.name);
     if (dirent.isDirectory()) {
+      if (dirent.name.startsWith(".")) continue;
       structure.push({
         name: dirent.name,
         path: path.relative(MEDIA_ROOT, fullPath),
@@ -29,27 +22,21 @@ async function getMediaStructure(currentPath = MEDIA_ROOT) {
         children: await getMediaStructure(fullPath),
       });
     } else if (dirent.isFile()) {
-      const ext = path.extname(dirent.name).toLowerCase();
-      if (VIDEO_EXTENSIONS.has(ext)) {
+      if (dirent.name.match(/\.(mp4|mkv|avi|mov|wmv|webm)$/)) {
         structure.push({
-          name: dirent.name,
+          name: dirent.name.replace(/\.[^.]+$/, ""),
           path: path.relative(MEDIA_ROOT, fullPath),
           fullPath: fullPath,
           stem: path.parse(dirent.name).name,
           type: "file",
         });
-      } else {
-        try {
-          await fs.access(fullPath, fs.constants.X_OK);
-          structure.push({
-            name: dirent.name,
-            path: path.relative(MEDIA_ROOT, fullPath),
-            fullPath: fullPath,
-            type: "script",
-          });
-        } catch (err) {
-          // Not executable, or other access error, ignore for now
-        }
+      } else if (dirent.name.match(/\.command\.tmc$/)) {
+        structure.push({
+          name: dirent.name.slice(0, -".command.tmc".length),
+          path: path.relative(MEDIA_ROOT, fullPath),
+          fullPath: fullPath,
+          type: "script",
+        });
       }
     }
   }
