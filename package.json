@@ -20,6 +20,7 @@
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.2",
     "fuse.js": "^7.1.0",
+    "path-browserify": "^1.0.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "vite": "^7.3.0"

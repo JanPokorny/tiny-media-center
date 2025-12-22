@@ -105,6 +105,10 @@ function Player({ movie, onBack }) {
       if (isPaused) setIsPaused(false)
       else onBack()
     },
+    BrowserBack: () => {
+      if (isPaused) setIsPaused(false)
+      else onBack()
+    },
     ' ': () => setIsPaused(prev => !prev)
   })
 
@@ -141,7 +145,7 @@ function Player({ movie, onBack }) {
                   key={option} 
                   className={`pause-item ${index === menuIndex ? 'selected' : ''}`}
                 >
-                  {index === menuIndex ? `> ${option} <` : `\u00A0\u00A0${option}`}
+                  {index === menuIndex ? `> ${option}` : `\u00A0\u00A0${option}`}
                 </div>
               ))}
             </div>

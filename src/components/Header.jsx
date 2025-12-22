@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 
-function Header() {
+function Header({ title = 'tiny media center' }) {
   const [time, setTime] = useState(new Date())
 
   useEffect(() => {
@@ -10,7 +10,7 @@ function Header() {
 
   return (
     <div className="header">
-      <div className="header-title">tiny media center</div>
+      <div className="header-title">{title}</div>
       <div className="header-clock">
         {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </div>

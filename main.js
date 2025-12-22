@@ -2,37 +2,41 @@ const { app, BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
 const fs = require("fs").promises
 
-// Ensure this points to where your media files are
-const MEDIA_DIR = path.join(__dirname, "media", "movies")
+const MEDIA_ROOT = path.join(__dirname, "media")
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"])
 
-async function listMedia() {
-  try {
-    console.log("Listing media from:", MEDIA_DIR)
-    const files = await fs.readdir(MEDIA_DIR)
-    console.log("Found files:", files)
-    const mediaFiles = files.filter(file => {
-      const ext = path.extname(file).toLowerCase()
-      return VIDEO_EXTENSIONS.has(ext)
-    })
-    console.log("Filtered media files:", mediaFiles)
-    return mediaFiles.map(file => ({
-      name: file,
-      path: file, 
-      fullPath: path.join(MEDIA_DIR, file),
-      stem: path.parse(file).name
-    }))
-  } catch (error) {
-    console.error("Error reading media directory:", error)
-    return []
+async function getMediaStructure(currentPath = MEDIA_ROOT) {
+  const structure = []
+  const dirents = await fs.readdir(currentPath, { withFileTypes: true })
+
+  for (const dirent of dirents) {
+    const fullPath = path.join(currentPath, dirent.name)
+    if (dirent.isDirectory()) {
+      structure.push({
+        name: dirent.name,
+        path: path.relative(MEDIA_ROOT, fullPath),
+        type: 'directory',
+        children: await getMediaStructure(fullPath)
+      })
+    } else if (dirent.isFile()) {
+      const ext = path.extname(dirent.name).toLowerCase()
+      if (VIDEO_EXTENSIONS.has(ext)) {
+        structure.push({
+          name: dirent.name,
+          path: path.relative(MEDIA_ROOT, fullPath),
+          fullPath: fullPath,
+          stem: path.parse(dirent.name).name,
+          type: 'file'
+        })
+      }
+    }
   }
+  return structure
 }
 
 async function saveMetadata(event, filePath, data) {
   try {
-    // Determine the correct path for the metadata file
-    // If filePath is absolute, use it. If relative, join with MEDIA_DIR.
-    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(MEDIA_DIR, filePath)
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(MEDIA_ROOT, filePath)
     const parsedPath = path.parse(fullPath)
     const metadataPath = path.join(parsedPath.dir, parsedPath.name + ".tsc")
     
@@ -45,7 +49,7 @@ async function saveMetadata(event, filePath, data) {
 }
 
 app.whenReady().then(() => {
-  ipcMain.handle('list-media', listMedia)
+  ipcMain.handle('get-media-structure', () => getMediaStructure())
   ipcMain.handle('save-metadata', saveMetadata)
 
   const win = new BrowserWindow({
