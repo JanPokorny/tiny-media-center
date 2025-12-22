@@ -33,7 +33,7 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
     },
     BrowserBack: () => {
       if (filter) {
-        setFilter(prev => prev.slice(0, -1))
+        setFilter('')
       } else {
         onBack()
       }
@@ -44,6 +44,9 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
       } else {
         onBack()
       }
+    },
+    Backspace: () => {
+      if (filter) setFilter(prev => prev.slice(0, -1))
     },
     default: (event) => {
       if (event.key.length === 1) {
