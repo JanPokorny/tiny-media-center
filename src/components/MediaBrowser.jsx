@@ -73,7 +73,7 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
         <div 
           className="movie-list"
           style={{ 
-            transform: `translateY(calc(50vh - ${(selectedIndex * 3.5) + 1.75}rem))` 
+            transform: `translateY(calc(50vh - ${(selectedIndex * 24) + 27}px))` 
           }}
         >
           {filteredItems.map((item, index) => {
