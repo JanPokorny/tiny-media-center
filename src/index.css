@@ -4,18 +4,21 @@
   --accent-color: #ffcc00;
   --dim-text-color: #444444;
   --font-family: 'Courier New', Courier, monospace;
-  --font-size: 36px;
+  --font-size: 72px;
+}
+
+body, pre {
+  font-size: var(--font-size);
+  font-family: var(--font-family);
+  color: var(--text-color);
 }
 
 body {
   margin: 0;
   padding: 0;
   background-color: var(--bg-color);
-  color: var(--text-color);
-  font-family: var(--font-family);
   overflow: hidden;
   user-select: none;
-  font-weight: bold;
 }
 
 #root {
@@ -26,14 +29,6 @@ body {
   flex-direction: column;
 }
 
-.app {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Header */
 .header {
   position: absolute;
   top: 0;
@@ -43,12 +38,10 @@ body {
   box-sizing: border-box;
   display: flex;
   justify-content: space-between;
-  font-size: var(--font-size);
-  color: #666; /* Gray header text */
+  color: var(--dim-text-color);
   z-index: 10;
 }
 
-/* Footer */
 .footer {
   position: absolute;
   bottom: 0;
@@ -58,41 +51,28 @@ body {
   box-sizing: border-box;
   display: flex;
   justify-content: space-between;
-  font-size: var(--font-size);
-  color: #666;
+  color: var(--dim-text-color);
   z-index: 10;
 }
 
-.footer-left {
-  color: #666;
-}
-
-/* Main Menu */
 .main-menu {
   display: flex;
   flex-direction: column;
   justify-content: center;
   height: 100%;
-  padding-left: 50px; /* Align left per new design */
+  padding-left: 50px;
 }
 
 .menu-list {
-  font-size: var(--font-size);
   display: flex;
   flex-direction: column;
-  align-items: flex-start; /* Left align items */
+  align-items: flex-start;
 }
 
-.menu-item {
-  margin: 5px 0;
-  color: var(--text-color);
-}
-
-.menu-item.selected {
+.selected {
   color: var(--accent-color);
 }
 
-/* Movie List */
 .movie-list-container {
   height: 100%;
   display: flex;
@@ -104,15 +84,12 @@ body {
   flex-grow: 1;
   overflow: hidden;
   position: relative;
-  /* Masking for fading effect at top/bottom */
-  mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 20%, black 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, transparent 10%, black 30%, black 70%, transparent 90%, transparent 100%);
 }
 
 .movie-list {
   display: flex;
   flex-direction: column;
-  font-size: var(--font-size);
   transition: transform 0.2s ease-out;
   padding-left: 50px;
 }
@@ -121,11 +98,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-color);
-}
-
-.movie-item.selected {
-  color: var(--accent-color);
 }
 
 /* Player */
@@ -147,22 +119,17 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background-color: rgba(0, 0, 0, 0.85); /* Darker overlay */
+  background-color: rgba(0, 0, 0, 0.85);
   display: flex;
   flex-direction: column;
 }
 
-/* Pause Menu Content */
 .pause-content {
   flex-grow: 1;
   display: flex;
   flex-direction: column;
   justify-content: center;
   padding-left: 50px;
-}
-
-.pause-menu-list {
-  font-size: var(--font-size);
 }
 
 .pause-item {
@@ -178,21 +145,17 @@ body {
   position: absolute;
   top: 20px;
   left: 30px;
-  font-size: var(--font-size);
-  color: #666;
+  color: var(--dim-text-color);
 }
 
-/* Search input style */
 .search-input {
   display: inline-block;
-  background: #667; /* Gray background for search box per typically UI */
+  background: #667;
   color: white;
   padding: 0 5px;
 }
 
 .script-output {
-  font-family: var(--font-family);
-  font-size: var(--font-size);
   padding-top: 100px;
   text-align: center;
 }

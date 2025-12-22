@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import Header from './Header'
 import Footer from './Footer'
@@ -69,24 +69,12 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
         >
           {filteredItems.map((item, index) => {
             const isSelected = index === selectedIndex;
-            const distance = Math.abs(index - selectedIndex);
-            let color = '#aaaaaa';
-            if (isSelected) color = 'var(--accent-color)';
-            else if (distance > 5) color = '#333333';
-            else if (distance > 2) color = '#666666';
-
             const displayName = item.type === 'directory' ? `${item.name}/` : item.name;
 
             return (
               <div
                 key={item.path}
                 className={`movie-item ${isSelected ? 'selected' : ''}`}
-                style={{ 
-                  color: color, 
-                  height: '3.5rem',
-                  lineHeight: '3.5rem',
-                  display: distance > 10 ? 'none' : 'block'
-                }}
               >
                 {isSelected ? `> ${displayName}` : `\u00A0\u00A0${displayName}`}
               </div>

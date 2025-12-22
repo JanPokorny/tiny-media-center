@@ -60,47 +60,43 @@ function App() {
     }
   }
 
-  const renderView = () => {
-    if (loading) {
-        return <div>Loading...</div>
-    }
-
-    switch (view) {
-      case 'BROWSER':
-        return (
-          <MediaBrowser
-            items={getCurrentItems()}
-            currentPath={currentPath}
-            onSelect={handleSelect}
-            onBack={handleBack}
-          />
-        )
-      case 'PLAYER':
-        return (
-          <Player
-            movie={selectedMovie}
-            onBack={() => {
-              setView('BROWSER')
-              setSelectedMovie(null)
-            }}
-          />
-        )
-      case 'SCRIPT_PLAYER':
-        return (
-          <ScriptPlayer
-            script={selectedScript}
-            onBack={() => {
-              setView('BROWSER')
-              setSelectedScript(null)
-            }}
-          />
-        )
-      default:
-        return <div>Unknown View</div>
-    }
+  if (loading) {
+    return <div>Loading...</div>
   }
 
-  return <div className="app">{renderView()}</div>
+  switch (view) {
+    case 'BROWSER':
+      return (
+        <MediaBrowser
+          items={getCurrentItems()}
+          currentPath={currentPath}
+          onSelect={handleSelect}
+          onBack={handleBack}
+        />
+      )
+    case 'PLAYER':
+      return (
+        <Player
+          movie={selectedMovie}
+          onBack={() => {
+            setView('BROWSER')
+            setSelectedMovie(null)
+          }}
+        />
+      )
+    case 'SCRIPT_PLAYER':
+      return (
+        <ScriptPlayer
+          script={selectedScript}
+          onBack={() => {
+            setView('BROWSER')
+            setSelectedScript(null)
+          }}
+        />
+      )
+    default:
+      return <div>Unknown View</div>
+  }
 }
 
 export default App
