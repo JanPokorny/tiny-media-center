@@ -31,7 +31,7 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
         onSelect(filteredItems[selectedIndex])
       }
     },
-    Backspace: () => {
+    BrowserBack: () => {
       if (filter) {
         setFilter(prev => prev.slice(0, -1))
       } else {
@@ -78,14 +78,13 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
         >
           {filteredItems.map((item, index) => {
             const isSelected = index === selectedIndex;
-            const displayName = item.type === 'directory' ? `${item.name}/` : item.name;
 
             return (
               <div
                 key={item.path}
                 className={`movie-item ${isSelected ? 'selected' : ''}`}
               >
-                {isSelected ? `> ${displayName}` : `\u00A0\u00A0${displayName}`}
+                {isSelected ? `> ${item.name}` : `\u00A0\u00A0${item.name}`}
               </div>
             );
           })}

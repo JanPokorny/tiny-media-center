@@ -26,7 +26,7 @@ function ScriptRunner({ script, onBack }) {
   }, [script]);
 
   useKeyboard({
-    Backspace: onBack,
+    BrowserBack: onBack,
     Escape: onBack,
   });
 

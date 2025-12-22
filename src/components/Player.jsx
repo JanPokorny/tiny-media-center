@@ -89,10 +89,6 @@ function Player({ movie, onBack }) {
     ArrowRight: () => {
       if (!isPaused) handleSkip(1);
     },
-    Backspace: () => {
-      if (isPaused) setIsPaused(false);
-      else onBack();
-    },
     Escape: () => {
       if (isPaused) setIsPaused(false);
       else onBack();
