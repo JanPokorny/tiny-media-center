@@ -11,6 +11,7 @@ function App() {
   const [selectedMovie, setSelectedMovie] = useState(null)
   const [selectedScript, setSelectedScript] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [pathSelection, setPathSelection] = useState({})
 
   useEffect(() => {
     async function fetchMedia() {
@@ -37,13 +38,15 @@ function App() {
     return items
   }
 
-  const handleSelect = (item) => {
-    if (item.type === 'directory') {
-      setCurrentPath(item.path)
-    } else if (item.type === 'file') {
+  const handleSelect = (item, index) => {
+    setPathSelection({ ...pathSelection, [currentPath]: index })
+    const { path: itemPath, type } = item
+    if (type === 'directory') {
+      setCurrentPath(itemPath)
+    } else if (type === 'file') {
       setSelectedMovie(item)
       setView('PLAYER')
-    } else if (item.type === 'script') {
+    } else if (type === 'script') {
       setSelectedScript(item)
       setView('SCRIPT_PLAYER')
     }
@@ -72,6 +75,7 @@ function App() {
           currentPath={currentPath}
           onSelect={handleSelect}
           onBack={handleBack}
+          initialSelectedIndex={pathSelection[currentPath]}
         />
       )
     case 'PLAYER':

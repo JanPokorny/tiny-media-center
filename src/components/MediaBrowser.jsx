@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { useKeyboard } from '../hooks/useKeyboard'
 
-function MediaBrowser({ items, onSelect, onBack, currentPath }) {
-  const [selectedIndex, setSelectedIndex] = useState(0)
+function MediaBrowser({ items, onSelect, onBack, currentPath, initialSelectedIndex }) {
+  const [selectedIndex, setSelectedIndex] = useState(initialSelectedIndex || 0)
   const [filter, setFilter] = useState('')
   const [time, setTime] = useState(new Date())
 
@@ -19,16 +19,16 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
   }, [items, filter])
 
   useEffect(() => {
-    setSelectedIndex(0)
+    setSelectedIndex(initialSelectedIndex || 0)
     setFilter('')
-  }, [items])
+  }, [items, initialSelectedIndex])
 
   useKeyboard({
     ArrowUp: () => setSelectedIndex(prev => Math.max(0, prev - 1)),
     ArrowDown: () => setSelectedIndex(prev => Math.min(filteredItems.length - 1, prev + 1)),
     Enter: () => {
       if (filteredItems[selectedIndex]) {
-        onSelect(filteredItems[selectedIndex])
+        onSelect(filteredItems[selectedIndex], selectedIndex)
       }
     },
     BrowserBack: () => {
@@ -103,3 +103,4 @@ function MediaBrowser({ items, onSelect, onBack, currentPath }) {
 }
 
 export default MediaBrowser
+
