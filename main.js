@@ -30,9 +30,9 @@ async function getMediaStructure(currentPath = MEDIA_ROOT) {
           stem: path.parse(dirent.name).name,
           type: "file",
         });
-      } else if (dirent.name.match(/\.command\.tmc$/)) {
+      } else if (dirent.name.match(/\.sh$/)) {
         structure.push({
-          name: dirent.name.slice(0, -".command.tmc".length),
+          name: dirent.name.slice(0, -".sh".length),
           path: path.relative(MEDIA_ROOT, fullPath),
           fullPath: fullPath,
           type: "script",
@@ -58,7 +58,7 @@ app.whenReady().then(() => {
   ipcMain.handle("get-media-structure", () => getMediaStructure());
 
   ipcMain.on("run-script", (event, scriptPath) => {
-    scriptProcess = spawn(path.join(MEDIA_ROOT, scriptPath), []);
+    scriptProcess = spawn("/bin/sh", [path.join(MEDIA_ROOT, scriptPath)]);
 
     scriptProcess.stdout.on("data", (data) => {
       win.webContents.send("script-output", data.toString());
