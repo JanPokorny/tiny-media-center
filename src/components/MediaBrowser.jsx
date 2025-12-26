@@ -1,16 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { useKeyboard } from '../hooks/useKeyboard'
+import Menu from './Menu'
 
 function MediaBrowser({ items, onSelect, onBack, currentPath, initialSelectedIndex }) {
   const [selectedIndex, setSelectedIndex] = useState(initialSelectedIndex || 0)
   const [filter, setFilter] = useState('')
-  const [time, setTime] = useState(new Date())
-
-  useEffect(() => {
-    const timer = setInterval(() => setTime(new Date()), 1000)
-    return () => clearInterval(timer)
-  }, [])
 
   const filteredItems = useMemo(() => {
     if (!filter) return items
@@ -23,6 +18,14 @@ function MediaBrowser({ items, onSelect, onBack, currentPath, initialSelectedInd
     setFilter('')
   }, [items, initialSelectedIndex])
 
+  const handleBack = () => {
+    if (filter) {
+      setFilter('')
+    } else {
+      onBack()
+    }
+  }
+
   useKeyboard({
     ArrowUp: () => setSelectedIndex(prev => Math.max(0, prev - 1)),
     ArrowDown: () => setSelectedIndex(prev => Math.min(filteredItems.length - 1, prev + 1)),
@@ -31,20 +34,8 @@ function MediaBrowser({ items, onSelect, onBack, currentPath, initialSelectedInd
         onSelect(filteredItems[selectedIndex], selectedIndex)
       }
     },
-    BrowserBack: () => {
-      if (filter) {
-        setFilter('')
-      } else {
-        onBack()
-      }
-    },
-    Escape: () => {
-      if (filter) {
-        setFilter('')
-      } else {
-        onBack()
-      }
-    },
+    Escape: handleBack,
+    BrowserBack: handleBack,
     Backspace: () => {
       if (filter) setFilter(prev => prev.slice(0, -1))
     },
@@ -53,7 +44,8 @@ function MediaBrowser({ items, onSelect, onBack, currentPath, initialSelectedInd
         setFilter(prev => prev + event.key)
       }
     }
-  })
+  }, [filter, filteredItems, selectedIndex])
+
 
   const footerLeft = filter ? (
     <span><span className="search-input">{filter}</span><span className="cursor">_</span></span>
@@ -65,35 +57,11 @@ function MediaBrowser({ items, onSelect, onBack, currentPath, initialSelectedInd
 
   return (
     <div className="movie-list-container">
-      <header>
-        <span>{currentFolderName}</span>
-        <span>
-          {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-        </span>
-      </header>
-      
-      <div className="movie-list-viewport">
-        <div 
-          className="movie-list"
-          style={{ 
-            transform: `translateY(calc(50vh - ${(selectedIndex * 54) + 27}px))` 
-          }}
-        >
-          {filteredItems.map((item, index) => {
-            const isSelected = index === selectedIndex;
-
-            return (
-              <div
-                key={item.path}
-                className={`movie-item ${isSelected ? 'selected' : ''}`}
-              >
-                {isSelected ? `> ${item.name}` : `\u00A0\u00A0${item.name}`}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
+      <Menu
+        items={filteredItems}
+        title={currentFolderName}
+        selectedIndex={selectedIndex}
+      />
       <footer>
         <span>{footerLeft}</span>
         <span></span>
@@ -103,4 +71,3 @@ function MediaBrowser({ items, onSelect, onBack, currentPath, initialSelectedInd
 }
 
 export default MediaBrowser
-

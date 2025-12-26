@@ -1,7 +1,10 @@
 const { app, BrowserWindow, ipcMain } = require("electron")
 const path = require("path")
 const fs = require("fs").promises
-const { spawn } = require("child_process");
+const os = require("os")
+const { spawn, exec } = require("child_process");
+const ffprobe = require('ffprobe-static');
+const ffmpeg = require('ffmpeg-static');
 
 const MEDIA_ROOT = process.env.TMC_MEDIA_PATH || path.join(__dirname, "media");
 
@@ -44,6 +47,7 @@ async function getMediaStructure(currentPath = MEDIA_ROOT) {
 }
 
 app.whenReady().then(() => {
+  app.commandLine.appendSwitch("enable-experimental-web-platform-features");
   const win = new BrowserWindow({
     show: false,
     fullscreen: true,
