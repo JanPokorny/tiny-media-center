@@ -87,9 +87,7 @@ end
 function selectItem()
   local filtered = filterItems(state.items, state.filter)
   if #filtered == 0 then return end
-  
   local item = filtered[state.selectedIndex]
-  
   if item.type == "directory" then
     state.currentPath = item.path
     state.items = scanDirectory(state.currentPath)
@@ -98,10 +96,8 @@ function selectItem()
   elseif item.type == "file" then
     state.movie = item
     state.view = "PLAYING"
-    local mpvCmd = string.format('mpv --fullscreen "%s" &', item.fullPath)
-    os.execute(mpvCmd)
+    os.execute(string.format('mpv --config-dir="%s" "%s" &', love.filesystem.getSaveDirectory() .. "/conf/mpv", item.fullPath))
   elseif item.type == "script" then
-    -- Properly execute shell scripts in the background
     local scriptCmd = string.format('sh "%s" &', item.fullPath)
     print("Executing script: " .. scriptCmd)
     os.execute(scriptCmd)
@@ -109,9 +105,10 @@ function selectItem()
 end
 
 function love.load()
-  love.window.setFullscreen(true)
+  love.filesystem.createDirectory('conf/mpv')
+  love.filesystem.write('conf/mpv/mpv.conf', love.filesystem.read('conf/mpv/mpv.conf'))
+  love.filesystem.write('conf/mpv/input.conf', love.filesystem.read('conf/mpv/input.conf'))
   love.mouse.setVisible(false)
-  -- Use monospace font
   UI.font = love.graphics.newFont("KodeMono-regular.ttf", UI.fontSize)
   love.graphics.setFont(UI.font)
   state.items = scanDirectory("")
@@ -163,12 +160,11 @@ function love.draw()
     
     love.graphics.setStencilTest()
     
-    love.graphics.setColor(UI.dimColor)
     if state.filter ~= "" then
       love.graphics.setColor(UI.textColor)
-      love.graphics.print(state.filter, 30, h - 70)
-      love.graphics.print("_", 30 + UI.font:getWidth(state.filter), h - 70)
+      love.graphics.print(state.filter .. "_", 30, h - 70)
     else
+      love.graphics.setColor(UI.dimColor)
       love.graphics.print("type to search", 30, h - 70)
     end
     
@@ -190,6 +186,9 @@ function love.keypressed(key)
       selectItem()
     elseif key == "escape" or key == "acback" then
       navigateBack()
+    elseif key == "backspace" and #state.filter > 0 then
+      state.filter = state.filter:sub(1, -2)
+      state.selectedIndex = 1
     elseif #key == 1 then
       state.filter = state.filter .. key
       state.selectedIndex = 1
@@ -212,8 +211,4 @@ function love.gamepadpressed(joystick, button)
   elseif button == "b" then
     love.keypressed("escape")
   end
-end
-
-function love.quit()
-  os.execute("killall mpv 2>/dev/null")
 end
