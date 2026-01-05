@@ -1,14 +1,21 @@
+local conf = require("conf_parser")
+
 local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
+local SAVE_DIR = love.filesystem.getSaveDirectory()
+local MPV_DIR = SAVE_DIR .. "/mpv"
 
 local state = {
-  view = "BROWSER",
-  currentPath = "",
-  items = {},
+  path = {},
   selectedIndex = 1,
-  filter = "",
   scrollOffset = 0,
   targetScrollOffset = 0,
-  movie = nil,
+  searchQuery = "",
+}
+
+local cache = {
+  tree = {},
+  tracks = {},
+  playbackOptions = {},
 }
 
 local UI = {
@@ -18,197 +25,391 @@ local UI = {
   dimColor = {0.27, 0.27, 0.27},
   fontSize = 48,
   itemHeight = 54,
-  font = nil,
 }
 
-function scanDirectory(path)
-  local items = {}
-  local fullPath = path == "" and MEDIA_ROOT or (MEDIA_ROOT .. "/" .. path)
-  
-  local handle = io.popen('ls -1 "' .. fullPath .. '" 2>/dev/null')
-  if not handle then
-    print("ERROR: Cannot open directory: " .. fullPath)
-    return items
-  end
-  
-  for file in handle:lines() do
-    if file:sub(1,1) ~= "." then
-      local itemPath = path == "" and file or (path .. "/" .. file)
-      local itemFullPath = fullPath .. "/" .. file
-      local testDir = io.popen('test -d "' .. itemFullPath .. '" && echo "yes"')
-      local isDir = testDir and testDir:read("*a"):match("yes") or false
-      if testDir then testDir:close() end
-      
+-- ------------------------------------------------------------
+-- Helpers
+-- ------------------------------------------------------------
+
+local function isVideoFile(name)
+  return name:match("%.mp4$") or name:match("%.mkv$")
+      or name:match("%.avi$") or name:match("%.mov$")
+      or name:match("%.webm$")
+end
+
+local function getFilePath(path)
+  return MEDIA_ROOT .. "/" .. table.concat(path, "/")
+end
+
+-- ------------------------------------------------------------
+-- Media tree
+-- ------------------------------------------------------------
+
+local function loadMediaTree(path)
+  local tree = {}
+  local h = io.popen('ls -1 "' .. path .. '" 2>/dev/null')
+  for name in h:lines() do
+    if name:sub(1, 1) ~= "." then
+      local full = path .. "/" .. name
+      local d = io.popen('test -d "' .. full .. '" && echo yes')
+      local isDir = d:read("*a") ~= ""
+      d:close()
+
       if isDir then
-        table.insert(items, {name = file, path = itemPath, fullPath = itemFullPath, type = "directory"})
-      elseif file:match("%.mp4$") or file:match("%.mkv$") or file:match("%.avi$") or file:match("%.mov$") or file:match("%.webm$") then
-        table.insert(items, {name = file:gsub("%.[^.]+$", ""), path = itemPath, fullPath = itemFullPath, type = "file"})
-      elseif file:match("%.sh$") then
-        table.insert(items, {name = file:gsub("%.sh$", ""), path = itemPath, fullPath = itemFullPath, type = "script"})
+        tree[name] = loadMediaTree(full)
+      elseif isVideoFile(name) then
+        tree[name] = { type = "video" }
       end
     end
   end
-  handle:close()
-  
-  print("Scanned " .. fullPath .. " - found " .. #items .. " items")
+  h:close()
+  return tree
+end
+
+-- ------------------------------------------------------------
+-- mpv integration
+-- ------------------------------------------------------------
+
+local function loadTracks(filePath)
+  if cache.tracks[filePath] then
+    return cache.tracks[filePath]
+  end
+
+  local h = io.popen(string.format(
+    'mpv --script="%s" --msg-level=all=no "%s" 2>/dev/null',
+    MPV_DIR .. "/print-info.lua", filePath
+  ))
+  local out = h:read("*a")
+  h:close()
+
+  local tracks = conf.parse(out)
+  cache.tracks[filePath] = tracks
+  return tracks
+end
+
+local function loadMetadata(videoPath)
+  local relativePath = table.concat(videoPath, "/")
+  local metadataFileRelativePath = "metadata/" .. relativePath .. ".conf"
+  local content, size = love.filesystem.read(metadataFileRelativePath)
+  if not content then return {} end
+  return conf.parse(content)
+end
+
+local function saveMetadata(videoPath, data)
+    local relativePath = table.concat(videoPath, "/")
+    local metadataFileRelativePath = "metadata/" .. relativePath .. ".conf"
+    love.filesystem.write(metadataFileRelativePath, conf.serialize(data))
+end
+
+-- ------------------------------------------------------------
+-- Path resolution
+-- ------------------------------------------------------------
+
+local function getVideoPathAndMenu()
+  local node = cache.tree
+  local videoIdx
+
+  for i, seg in ipairs(state.path) do
+    if seg:sub(1, 1) == ":" then
+      videoIdx = i - 1
+      break
+    end
+    node = node[seg]
+    if node and node.type == "video" then
+      videoIdx = i
+      break
+    end
+  end
+
+  if not videoIdx then return nil, nil end
+
+  local videoPath = {}
+  for i = 1, videoIdx do
+    table.insert(videoPath, state.path[i])
+  end
+
+  return videoPath, state.path[videoIdx + 1]
+end
+
+-- ------------------------------------------------------------
+-- Menu construction
+-- ------------------------------------------------------------
+
+local function buildTrackLabel(prefix, track)
+  local label = prefix .. " " .. track.id
+  if track.lang then label = label .. " [" .. track.lang .. "]" end
+  if track.title then label = label .. " - " .. track.title end
+  if track.channels then label = label .. " (" .. track.channels .. "ch)" end
+  return label
+end
+
+local function getMenuItems()
+  local videoPath, menuType = getVideoPathAndMenu()
+
+  -- ----------------------------------------------------------
+  -- Track submenus
+  -- ----------------------------------------------------------
+
+  if menuType == ":audio" or menuType == ":sub" then
+    local filePath = getFilePath(videoPath)
+    local tracks = loadTracks(filePath)
+    local items = {}
+
+    if menuType == ":sub" then
+      table.insert(items, {
+        label = "none",
+        action = "select_sub",
+        trackId = ""
+      })
+    end
+
+    for _, track in pairs(tracks) do
+      if (menuType == ":audio" and track.type == "audio")
+      or (menuType == ":sub"   and track.type == "sub") then
+        table.insert(items, {
+          label = buildTrackLabel(track.type:sub(1,1), track),
+          action = menuType == ":audio" and "select_audio" or "select_sub",
+          trackId = track.id
+        })
+      end
+    end
+
+    table.sort(items, function(a, b)
+      return a.trackId < b.trackId
+    end)
+
+    return items
+  end
+
+  -- ----------------------------------------------------------
+  -- Video menu
+  -- ----------------------------------------------------------
+
+  if videoPath then
+    local filePath = getFilePath(videoPath)
+    local tracks = loadTracks(filePath)
+    local playbackOptions = cache.playbackOptions[filePath] or {}
+
+    local items = {
+      { label = "play", action = "play" }
+    }
+
+    -- Audio label
+    local aid = tonumber(playbackOptions.aid)
+    if not aid then
+      for _, t in pairs(tracks) do
+        if t.type == "audio" and t.selected == "yes" then
+          aid = tonumber(t.id)
+          break
+        end
+      end
+    end
+
+    local audioLabel = "audio"
+    if aid and tracks["a:" .. aid] then
+      audioLabel = "audio [" .. (tracks["a:" .. aid].lang or "?") .. "]"
+    end
+    table.insert(items, { label = audioLabel, action = "audio_menu" })
+
+    -- Subtitle label
+    local sid = playbackOptions.sid
+    if sid == nil then
+        for _, t in pairs(tracks) do
+            if t.type == "sub" and t.selected == "yes" then
+                sid = t.id
+                break
+            end
+        end
+    end
+    if sid then sid = tostring(sid) end
+
+
+    local subLabel = "subtitles"
+    if sid == "" then
+      subLabel = "subtitles [none]"
+    elseif sid and tracks["s:" .. sid] then
+      subLabel = "subtitles [" .. (tracks["s:" .. sid].lang or "und") .. "]"
+    end
+    table.insert(items, { label = subLabel, action = "sub_menu" })
+
+    return items
+  end
+
+  -- ----------------------------------------------------------
+  -- Directory listing
+  -- ----------------------------------------------------------
+
+  local node = cache.tree
+  for _, seg in ipairs(state.path) do
+    node = node[seg]
+    if not node then return {} end
+  end
+
+  local items = {}
+  for name in pairs(node) do
+    table.insert(items, { label = name })
+  end
+  table.sort(items, function(a, b) return a.label < b.label end)
+
+  if state.searchQuery ~= "" then
+    local q = state.searchQuery:lower()
+    local filtered = {}
+    for _, it in ipairs(items) do
+      if it.label:lower():find(q, 1, true) then
+        table.insert(filtered, it)
+      end
+    end
+    return filtered
+  end
+
   return items
 end
 
-function filterItems(items, query)
-  if query == "" then return items end
-  
-  local filtered = {}
-  local lowerQuery = query:lower()
-  for _, item in ipairs(items) do
-    if item.name:lower():find(lowerQuery, 1, true) then
-      table.insert(filtered, item)
+-- ------------------------------------------------------------
+-- Navigation
+-- ------------------------------------------------------------
+
+local function navigate(dir)
+  if dir == "in" then
+    local items = getMenuItems()
+    local item = items[state.selectedIndex]
+    if not item then return end
+
+    if item.action == "play" then
+      local videoPath, _ = getVideoPathAndMenu()
+      local filePath = getFilePath(videoPath)
+      local metadata = loadMetadata(videoPath)
+      local playbackOptions = cache.playbackOptions[filePath] or {}
+
+      local args = {
+        "--fullscreen",
+        "--msg-level=all=no",
+        string.format('--config-dir="%s"', MPV_DIR),
+        string.format('--script="%s"', MPV_DIR .. "/print-position.lua")
+      }
+
+      if metadata.position then
+        table.insert(args, string.format("--start=%s", metadata.position))
+      end
+      if playbackOptions.aid then
+        table.insert(args, string.format("--aid=%s", playbackOptions.aid))
+      end
+      if playbackOptions.sid then
+        table.insert(args, string.format("--sid=%s", playbackOptions.sid))
+      end
+
+      local cmd = string.format('mpv %s "%s"', table.concat(args, " "), filePath)
+      print("running: " .. cmd)
+      local h = io.popen(cmd)
+      local output = h:read("*a")
+      h:close()
+      print("mpv output:\n" .. output)
+      saveMetadata(videoPath, conf.parse(output))
+
+    elseif item.action == "audio_menu" then
+      table.insert(state.path, ":audio")
+      state.selectedIndex = 1
+      state.scrollOffset = 0
+    elseif item.action == "sub_menu" then
+      table.insert(state.path, ":sub")
+      state.selectedIndex = 1
+      state.scrollOffset = 0
+    elseif item.action == "select_audio" then
+      local videoPath, _ = getVideoPathAndMenu()
+      local filePath = getFilePath(videoPath)
+      if not cache.playbackOptions[filePath] then cache.playbackOptions[filePath] = {} end
+      cache.playbackOptions[filePath].aid = item.trackId
+      table.remove(state.path)
+      state.selectedIndex = 2
+      state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+    elseif item.action == "select_sub" then
+      local videoPath, _ = getVideoPathAndMenu()
+      local filePath = getFilePath(videoPath)
+      if not cache.playbackOptions[filePath] then cache.playbackOptions[filePath] = {} end
+      cache.playbackOptions[filePath].sid = item.trackId
+      table.remove(state.path)
+      state.selectedIndex = 3
+      state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+    else
+      table.insert(state.path, item.label)
+      state.selectedIndex = 1
+      state.searchQuery = ""
+      state.scrollOffset = 0
     end
+
+  elseif dir == "out" then
+    if state.searchQuery ~= "" then
+      state.searchQuery = ""
+    elseif #state.path > 0 then
+      table.remove(state.path)
+    end
+    state.selectedIndex = 1
+    state.scrollOffset = 0
+  elseif dir == "up" then
+    state.selectedIndex = math.max(1, state.selectedIndex - 1)
+  elseif dir == "down" then
+    state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
   end
-  return filtered
 end
 
-function navigateBack()
-  if state.filter ~= "" then
-    state.filter = ""
-    state.selectedIndex = 1
-  elseif state.currentPath ~= "" then
-    local parts = {}
-    for part in state.currentPath:gmatch("[^/]+") do
-      table.insert(parts, part)
-    end
-    table.remove(parts)
-    state.currentPath = table.concat(parts, "/")
-    state.items = scanDirectory(state.currentPath)
-    state.selectedIndex = 1
-    state.filter = ""
-  end
-end
-
-function selectItem()
-  local filtered = filterItems(state.items, state.filter)
-  if #filtered == 0 then return end
-  local item = filtered[state.selectedIndex]
-  if item.type == "directory" then
-    state.currentPath = item.path
-    state.items = scanDirectory(state.currentPath)
-    state.selectedIndex = 1
-    state.filter = ""
-  elseif item.type == "file" then
-    state.movie = item
-    state.view = "PLAYING"
-    os.execute(string.format('mpv --config-dir="%s" "%s" &', love.filesystem.getSaveDirectory() .. "/conf/mpv", item.fullPath))
-  elseif item.type == "script" then
-    local scriptCmd = string.format('sh "%s" &', item.fullPath)
-    print("Executing script: " .. scriptCmd)
-    os.execute(scriptCmd)
-  end
-end
+-- ------------------------------------------------------------
+-- LOVE callbacks
+-- ------------------------------------------------------------
 
 function love.load()
-  love.filesystem.createDirectory('conf/mpv')
-  love.filesystem.write('conf/mpv/mpv.conf', love.filesystem.read('conf/mpv/mpv.conf'))
-  love.filesystem.write('conf/mpv/input.conf', love.filesystem.read('conf/mpv/input.conf'))
+  love.filesystem.createDirectory("metadata")
+  love.filesystem.write("mpv/print-info.lua", love.filesystem.read("attachments/mpv/print-info.lua"))
+  love.filesystem.write("mpv/print-position.lua", love.filesystem.read("attachments/mpv/print-position.lua"))
+  love.filesystem.write("mpv/mpv.conf", love.filesystem.read("attachments/mpv/mpv.conf"))
+  love.filesystem.write("mpv/input.conf", love.filesystem.read("attachments/mpv/input.conf"))
+  love.graphics.setFont(love.graphics.newFont("KodeMono-regular.ttf", UI.fontSize))
+  love.graphics.setBackgroundColor(UI.bgColor)
   love.mouse.setVisible(false)
-  UI.font = love.graphics.newFont("KodeMono-regular.ttf", UI.fontSize)
-  love.graphics.setFont(UI.font)
-  state.items = scanDirectory("")
+  cache.tree = loadMediaTree(MEDIA_ROOT)
 end
 
 function love.update(dt)
-  local diff = state.targetScrollOffset - state.scrollOffset
-  state.scrollOffset = state.scrollOffset + diff * 10 * dt
+  state.scrollOffset =
+    state.scrollOffset + (state.targetScrollOffset - state.scrollOffset) * 10 * dt
 end
 
 function love.draw()
-  love.graphics.setBackgroundColor(UI.bgColor)
-  
   local w, h = love.graphics.getDimensions()
   local centerY = h / 2
-  
-  if state.view == "BROWSER" then
-    love.graphics.setColor(UI.dimColor)
-    local title = state.currentPath == "" and "tiny media center" or state.currentPath:match("[^/]+$")
-    love.graphics.print(title, 30, 20)
-    love.graphics.print(os.date("%H:%M"), w - 150, 20)
-    
-    local filtered = filterItems(state.items, state.filter)
-    state.targetScrollOffset = (state.selectedIndex - 1) * UI.itemHeight
-    
-    love.graphics.stencil(function()
-      love.graphics.rectangle("fill", 0, h * 0.1, w, h * 0.8)
-    end, "replace", 1)
-    love.graphics.setStencilTest("greater", 0)
-    
-    for i, item in ipairs(filtered) do
-      local y = centerY - state.scrollOffset + (i - 1) * UI.itemHeight - 27
-      local distFromCenter = math.abs(y - centerY)
-      local fadeStart = h * 0.3
-      local fadeEnd = h * 0.4
-      local alpha = 1.0
-      if distFromCenter > fadeStart then
-        alpha = math.max(0, 1 - (distFromCenter - fadeStart) / (fadeEnd - fadeStart))
-      end
-      
-      if i == state.selectedIndex then
-        love.graphics.setColor(UI.accentColor[1], UI.accentColor[2], UI.accentColor[3], alpha)
-        love.graphics.print("> " .. item.name, 50, y)
-      else
-        love.graphics.setColor(UI.textColor[1], UI.textColor[2], UI.textColor[3], alpha)
-        love.graphics.print("  " .. item.name, 50, y)
-      end
-    end
-    
-    love.graphics.setStencilTest()
-    
-    if state.filter ~= "" then
-      love.graphics.setColor(UI.textColor)
-      love.graphics.print(state.filter .. "_", 30, h - 70)
+
+  local title = state.path[#state.path] or "tiny media center"
+  if title:sub(1,1) == ":" then title = title:sub(2) end
+
+  love.graphics.setColor(UI.dimColor)
+  love.graphics.print(title, 30, 20)
+
+  local items = getMenuItems()
+  state.targetScrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+
+  for i, item in ipairs(items) do
+    local y = centerY - state.scrollOffset + (i - 1) * UI.itemHeight
+    if i == state.selectedIndex then
+      love.graphics.setColor(UI.accentColor)
+      love.graphics.print("> " .. item.label, 50, y)
     else
-      love.graphics.setColor(UI.dimColor)
-      love.graphics.print("type to search", 30, h - 70)
+      love.graphics.setColor(UI.textColor)
+      love.graphics.print("  " .. item.label, 50, y)
     end
-    
-  elseif state.view == "PLAYING" then
-    love.graphics.setColor(UI.textColor)
-    love.graphics.printf("Playing in mpv...\nPress ESC to return to browser", 0, h/2 - 50, w, "center")
   end
 end
 
 function love.keypressed(key)
-  if state.view == "BROWSER" then
-    if key == "up" then
-      local filtered = filterItems(state.items, state.filter)
-      state.selectedIndex = math.max(1, state.selectedIndex - 1)
-    elseif key == "down" then
-      local filtered = filterItems(state.items, state.filter)
-      state.selectedIndex = math.min(#filtered, state.selectedIndex + 1)
-    elseif key == "return" then
-      selectItem()
-    elseif key == "escape" or key == "acback" then
-      navigateBack()
-    elseif key == "backspace" and #state.filter > 0 then
-      state.filter = state.filter:sub(1, -2)
-      state.selectedIndex = 1
-    elseif #key == 1 then
-      state.filter = state.filter .. key
-      state.selectedIndex = 1
-    end
-  elseif state.view == "PLAYING" then
-    if key == "escape" then
-      state.view = "BROWSER"
-      state.movie = nil
-    end
-  end
-end
-
-function love.gamepadpressed(joystick, button)
-  if button == "dpup" then
-    love.keypressed("up")
-  elseif button == "dpdown" then
-    love.keypressed("down")
-  elseif button == "a" then
-    love.keypressed("return")
-  elseif button == "b" then
-    love.keypressed("escape")
+  if key == "up" then navigate("up")
+  elseif key == "down" then navigate("down")
+  elseif key == "return" then navigate("in")
+  elseif key == "escape" then navigate("out")
+  elseif key == "backspace" then
+    state.searchQuery = state.searchQuery:sub(1, -2)
+    state.selectedIndex = 1
+    state.scrollOffset = 0
+  elseif #key == 1 then
+    state.searchQuery = state.searchQuery .. key
+    state.selectedIndex = 1
+    state.scrollOffset = 0
   end
 end
