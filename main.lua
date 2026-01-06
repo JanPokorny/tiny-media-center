@@ -563,5 +563,7 @@ function love.keypressed(key)
     state.searchQuery = state.searchQuery .. key
     state.selectedIndex = 1
     state.scrollOffset = 0
+  else
+    print("unhandled key: " .. key)
   end
 end
