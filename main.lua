@@ -429,7 +429,7 @@ function navigateIn()
     if playbackOptions.aid then
       table.insert(args, string.format("--aid=%s", playbackOptions.aid))
     end
-    if playbackOptions.sid then
+    if playbackOptions.sid and #playbackOptions.sid > 0 then
       table.insert(args, string.format("--sid=%s", playbackOptions.sid))
     end
 
