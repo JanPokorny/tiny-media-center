@@ -9,7 +9,6 @@ local state = {
   selectedIndex = 1,
   scrollOffset = 0,
   targetScrollOffset = 0,
-  searchQuery = "",
   lastSelectedTarget = nil,
 }
 
@@ -385,17 +384,6 @@ local function getMenuItems()
   
   sortItems(items)
 
-  if state.searchQuery ~= "" then
-    local q = state.searchQuery:lower()
-    local filtered = {}
-    for _, it in ipairs(items) do
-      if it.label:lower():find(q, 1, true) then
-        table.insert(filtered, it)
-      end
-    end
-    return filtered
-  end
-
   return items
 end
 
@@ -474,16 +462,13 @@ function navigateIn()
   else
     table.insert(state.path, item.target)
     state.selectedIndex = 1
-    state.searchQuery = ""
     state.scrollOffset = 0
     preloadMetadataForLevel()
   end
 end
 
 function navigateOut()
-  if state.searchQuery ~= "" then
-    state.searchQuery = ""
-  elseif #state.path > 0 then
+  if #state.path > 0 then
     local lastSegment = state.path[#state.path]
     table.remove(state.path)
     
@@ -555,14 +540,14 @@ function love.keypressed(key)
   elseif key == "down" then state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
   elseif key == "return" then navigateIn()
   elseif key == "escape" or key == "appback" or key == "sleep" then navigateOut()
-  elseif key == "backspace" then
-    state.searchQuery = state.searchQuery:sub(1, -2)
-    state.selectedIndex = 1
-    state.scrollOffset = 0
   elseif #key == 1 then
-    state.searchQuery = state.searchQuery .. key
-    state.selectedIndex = 1
-    state.scrollOffset = 0
+    local items = getMenuItems()
+    for i = 0, #items - 1 do
+      if items[1 + (state.selectedIndex + i) % #items].label:lower():sub(1, 1):lower() == key then
+        state.selectedIndex = 1 + (state.selectedIndex + i) % #items
+        break
+      end
+    end
   else
     print("unhandled key: " .. key)
   end
