@@ -2,7 +2,6 @@ local conf = require("conf_parser")
 
 local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
 local SAVE_DIR = love.filesystem.getSaveDirectory()
-local MPV_DIR = SAVE_DIR .. "/mpv"
 
 local state = {
   path = {},
@@ -31,16 +30,6 @@ local UI = {
 -- Helpers
 -- ------------------------------------------------------------
 
-local function isVideoFile(name)
-  return name:match("%.mp4$") or name:match("%.mkv$")
-      or name:match("%.avi$") or name:match("%.mov$")
-      or name:match("%.webm$")
-end
-
-local function isWiiGameFile(name)
-  return name:match("%.iso$") or name:match("%.rvz$")
-end
-
 local function getFilePath(path)
   return MEDIA_ROOT .. "/" .. table.concat(path, "/")
 end
@@ -61,10 +50,12 @@ local function loadMediaTree(path)
 
       if isDir then
         tree[name] = loadMediaTree(full)
-      elseif isVideoFile(name) then
+      elseif name:match("%.mp4$") or name:match("%.mkv$") or name:match("%.avi$") then
         tree[name] = { type = "video" }
-      elseif isWiiGameFile(name) then
+      elseif name:match("%.iso$") or name:match("%.rvz$")then
         tree[name] = { type = "wii_game" }
+      elseif name:match("%.sh$") then
+        tree[name] = { type = "script" }
       end
     end
   end
@@ -83,7 +74,7 @@ local function loadTracks(filePath)
 
   local h = io.popen(string.format(
     'mpv --script="%s" --msg-level=all=no "%s" 2>/dev/null',
-    MPV_DIR .. "/print-info.lua", filePath
+    SAVE_DIR .. "/mpv/print-info.lua", filePath
   ))
   local out = h:read("*a")
   h:close()
@@ -376,6 +367,9 @@ local function getMenuItems()
     elseif child.type == "wii_game" then
       item.isWiiGame = true
       item.action = "play_wii_game"
+    elseif child.type == "script" then
+      item.isScript = true
+      item.action = "run_script"
     end
     
     table.insert(items, item)
@@ -406,8 +400,8 @@ function navigateIn()
     local args = {
       "--fullscreen",
       "--msg-level=all=no",
-      string.format('--config-dir="%s"', MPV_DIR),
-      string.format('--script="%s"', MPV_DIR .. "/print-position.lua")
+      string.format('--config-dir="%s"', SAVE_DIR .. "/mpv"),
+      string.format('--script="%s"', SAVE_DIR .. "/mpv/print-position.lua")
     }
 
     if metadata.position and tonumber(metadata.position) < tonumber(metadata.duration) - 3 then
@@ -432,6 +426,13 @@ function navigateIn()
     table.insert(gamePath, item.target)
     local filePath = getFilePath(gamePath)
     local cmd = string.format('dolphin-emu --batch --exec="%s"', filePath)
+    print("running: " .. cmd)
+    io.popen(cmd)
+  elseif item.action == "run_script" then
+    local scriptPath = {unpack(state.path)}
+    table.insert(scriptPath, item.target)
+    local filePath = getFilePath(scriptPath)
+    local cmd = string.format('bash "%s"', filePath)
     print("running: " .. cmd)
     io.popen(cmd)
   elseif item.action == "audio_menu" then
