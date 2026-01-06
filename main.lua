@@ -74,7 +74,7 @@ local function loadTracks(filePath)
 
   local h = io.popen(string.format(
     'mpv --script="%s" --msg-level=all=no "%s" 2>/dev/null',
-    SAVE_DIR .. "/mpv/print-info.lua", filePath
+    SAVE_DIR .. "/mpv/preflight.lua", filePath
   ))
   local out = h:read("*a")
   h:close()
@@ -401,7 +401,7 @@ function navigateIn()
       "--fullscreen",
       "--msg-level=all=no",
       string.format('--config-dir="%s"', SAVE_DIR .. "/mpv"),
-      string.format('--script="%s"', SAVE_DIR .. "/mpv/print-position.lua")
+      string.format('--script="%s"', SAVE_DIR .. "/mpv/runtime.lua")
     }
 
     if metadata.position and tonumber(metadata.position) < tonumber(metadata.duration) - 3 then
@@ -494,8 +494,8 @@ end
 function love.load()
   love.filesystem.createDirectory("metadata")
   love.filesystem.createDirectory("mpv")
-  love.filesystem.write("mpv/print-info.lua", love.filesystem.read("attachments/mpv/print-info.lua"))
-  love.filesystem.write("mpv/print-position.lua", love.filesystem.read("attachments/mpv/print-position.lua"))
+  love.filesystem.write("mpv/preflight.lua", love.filesystem.read("attachments/mpv/preflight.lua"))
+  love.filesystem.write("mpv/runtime.lua", love.filesystem.read("attachments/mpv/runtime.lua"))
   love.filesystem.write("mpv/mpv.conf", love.filesystem.read("attachments/mpv/mpv.conf"))
   love.filesystem.write("mpv/input.conf", love.filesystem.read("attachments/mpv/input.conf"))
   love.graphics.setFont(love.graphics.newFont("KodeMono-Regular.ttf", UI.fontSize))

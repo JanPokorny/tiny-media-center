@@ -1,4 +1,5 @@
 mp.register_event("file-loaded", function()
+  io.stdout:write(string.format("duration=%s\n", mp.get_property_number("duration")))
   local tracks = mp.get_property_native("track-list")
   for _, track in ipairs(tracks) do
     if track.type == "audio" or track.type == "sub" then
