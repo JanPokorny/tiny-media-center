@@ -91,28 +91,22 @@ local function loadMetadata(videoPath)
     return cache.metadata[relativePath]
   end
   
-  local metadataFileRelativePath = "metadata/" .. relativePath .. ".conf"
-  local content, size = love.filesystem.read(metadataFileRelativePath)
-  if not content then 
-    cache.metadata[relativePath] = {}
-    return {}
-  end
-  
-  local metadata = conf.parse(content)
+  local content = love.filesystem.read("metadata/" .. relativePath .. ".conf") 
+  local metadata = conf.parse(content or "")
   cache.metadata[relativePath] = metadata
   return metadata
 end
 
 local function saveMetadata(videoPath, data)
   local relativePath = table.concat(videoPath, "/")
-  local metadataFileRelativePath = "metadata/" .. relativePath .. ".conf"
-  love.filesystem.write(metadataFileRelativePath, conf.serialize(data))
+  love.filesystem.write("metadata/" .. relativePath .. ".conf", conf.serialize(data))
   cache.metadata[relativePath] = data
 end
 
 local function getWatchPercentage(videoPath)
   local metadata = loadMetadata(videoPath)
-  local pct = math.floor((tonumber(metadata.position) / tonumber(metadata.duration)) * 100 + 0.5)
+  if not metadata.duration then return 0 end
+  local pct = math.floor((tonumber(metadata.position or 0) / tonumber(metadata.duration)) * 100 + 0.5)
   return (pct > 90) and 100 or pct
 end
 
