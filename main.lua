@@ -358,6 +358,7 @@ end
 
 function love.load()
   love.filesystem.createDirectory("metadata")
+  love.filesystem.createDirectory("mpv")
   love.filesystem.write("mpv/print-info.lua", love.filesystem.read("attachments/mpv/print-info.lua"))
   love.filesystem.write("mpv/print-position.lua", love.filesystem.read("attachments/mpv/print-position.lua"))
   love.filesystem.write("mpv/mpv.conf", love.filesystem.read("attachments/mpv/mpv.conf"))
