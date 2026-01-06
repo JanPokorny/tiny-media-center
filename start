@@ -1,5 +1,6 @@
 #!/bin/bash
 
+export TMC_MEDIA_PATH="/media"
 cd -- "$( dirname -- "${BASH_SOURCE[0]}" )"
 git pull
 love .
