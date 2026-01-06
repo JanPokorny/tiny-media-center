@@ -554,7 +554,7 @@ function love.keypressed(key)
   if key == "up" then state.selectedIndex = math.max(1, state.selectedIndex - 1)
   elseif key == "down" then state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
   elseif key == "return" then navigateIn()
-  elseif key == "escape" or key == "appback" then navigateOut()
+  elseif key == "escape" or key == "appback" or key == "sleep" then navigateOut()
   elseif key == "backspace" then
     state.searchQuery = state.searchQuery:sub(1, -2)
     state.selectedIndex = 1
