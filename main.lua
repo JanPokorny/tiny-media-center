@@ -25,8 +25,8 @@ local UI = {
   textColor = {0.67, 0.67, 0.67},
   accentColor = {1, 0.8, 0},
   dimColor = {0.27, 0.27, 0.27},
-  fontSize = 48,
-  itemHeight = 54,
+  fontSize = 72,
+  itemHeight = 81,
 }
 
 -- ------------------------------------------------------------
