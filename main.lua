@@ -128,25 +128,6 @@ local function getWatchPercentage(videoPath)
   return pct
 end
 
-local function preloadMetadataForLevel()
-  local node = cache.tree
-  for _, seg in ipairs(state.path) do
-    node = node[seg]
-    if not node then return end
-  end
-
-  for name, child in pairs(node) do
-    if child.type == "video" then
-      local videoPath = {}
-      for _, seg in ipairs(state.path) do
-        table.insert(videoPath, seg)
-      end
-      table.insert(videoPath, name)
-      loadMetadata(videoPath)
-    end
-  end
-end
-
 -- ------------------------------------------------------------
 -- Path resolution
 -- ------------------------------------------------------------
@@ -496,7 +477,6 @@ function navigateIn()
     table.insert(state.path, item.target)
     state.selectedIndex = 1
     state.scrollOffset = 0
-    preloadMetadataForLevel()
   end
 end
 
@@ -504,8 +484,6 @@ function navigateOut()
   if #state.path > 0 then
     local lastSegment = state.path[#state.path]
     table.remove(state.path)
-    
-    preloadMetadataForLevel()
     
     local items = getMenuItems()
     state.selectedIndex = 1
@@ -535,7 +513,6 @@ function love.load()
   love.graphics.setBackgroundColor(UI.bgColor)
   love.mouse.setVisible(false)
   cache.tree = loadMediaTree(MEDIA_ROOT)
-  preloadMetadataForLevel()
 end
 
 function love.update(dt)
