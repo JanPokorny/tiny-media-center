@@ -112,20 +112,8 @@ end
 
 local function getWatchPercentage(videoPath)
   local metadata = loadMetadata(videoPath)
-  local pos = tonumber(metadata.position)
-  local dur = tonumber(metadata.duration)
-  
-  if not pos or not dur or dur == 0 then
-    return 0
-  end
-  
-  local pct = math.floor((pos / dur) * 100 + 0.5)
-  
-  if pct > 90 then
-    return 100
-  end
-  
-  return pct
+  local pct = math.floor((tonumber(metadata.position) / tonumber(metadata.duration)) * 100 + 0.5)
+  return (pct > 90) and 100 or pct
 end
 
 -- ------------------------------------------------------------
