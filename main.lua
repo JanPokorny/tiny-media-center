@@ -402,7 +402,7 @@ function love.keypressed(key)
   if key == "up" then navigate("up")
   elseif key == "down" then navigate("down")
   elseif key == "return" then navigate("in")
-  elseif key == "escape" then navigate("out")
+  elseif key == "escape" or key == "appback" then navigate("out")
   elseif key == "backspace" then
     state.searchQuery = state.searchQuery:sub(1, -2)
     state.selectedIndex = 1
