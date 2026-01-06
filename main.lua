@@ -39,6 +39,10 @@ local function isVideoFile(name)
       or name:match("%.webm$")
 end
 
+local function isWiiGameFile(name)
+  return name:match("%.iso$") or name:match("%.rvz$")
+end
+
 local function getFilePath(path)
   return MEDIA_ROOT .. "/" .. table.concat(path, "/")
 end
@@ -61,6 +65,8 @@ local function loadMediaTree(path)
         tree[name] = loadMediaTree(full)
       elseif isVideoFile(name) then
         tree[name] = { type = "video" }
+      elseif isWiiGameFile(name) then
+        tree[name] = { type = "wii_game" }
       end
     end
   end
@@ -369,6 +375,9 @@ local function getMenuItems()
       if pct > 0 then
         item.label = name .. " [" .. pct .. "%]"
       end
+    elseif child.type == "wii_game" then
+      item.isWiiGame = true
+      item.action = "play_wii_game"
     end
     
     table.insert(items, item)
@@ -431,7 +440,13 @@ function navigateIn()
     h:close()
     print("mpv output:\n" .. output)
     saveMetadata(videoPath, conf.parse(output))
-
+  elseif item.action == "play_wii_game" then
+    local gamePath = {unpack(state.path)}
+    table.insert(gamePath, item.target)
+    local filePath = getFilePath(gamePath)
+    local cmd = string.format('dolphin --batch --exec="%s"', filePath)
+    print("running: " .. cmd)
+    io.popen(cmd)
   elseif item.action == "audio_menu" then
     table.insert(state.path, ":audio")
     state.selectedIndex = 1
