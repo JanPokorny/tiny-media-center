@@ -8,7 +8,6 @@ local state = {
   path = {},
   selectedIndex = 1,
   scrollOffset = 0,
-  targetScrollOffset = 0,
   lastSelectedTarget = nil,
 }
 
@@ -506,24 +505,14 @@ function love.load()
 end
 
 function love.update(dt)
-  state.scrollOffset =
-    state.scrollOffset + (state.targetScrollOffset - state.scrollOffset) * 10 * dt
+  state.scrollOffset = state.scrollOffset + (((state.selectedIndex - 1) * UI.itemHeight) - state.scrollOffset) * 10 * dt
 end
 
 function love.draw()
   local w, h = love.graphics.getDimensions()
   local centerY = h / 2
 
-  local title = state.path[#state.path] or "tiny media center"
-  if title:sub(1,1) == ":" then title = title:sub(2) end
-
-  love.graphics.setColor(UI.dimColor)
-  love.graphics.print(title, 30, 20)
-
-  local items = getMenuItems()
-  state.targetScrollOffset = (state.selectedIndex - 1) * UI.itemHeight
-
-  for i, item in ipairs(items) do
+  for i, item in ipairs(getMenuItems()) do
     local y = centerY - state.scrollOffset + (i - 1) * UI.itemHeight
     if i == state.selectedIndex then
       love.graphics.setColor(UI.accentColor)
@@ -533,6 +522,10 @@ function love.draw()
       love.graphics.print("  " .. item.label, 50, y)
     end
   end
+  local title = state.path[#state.path] or "tiny media center"
+  if title:sub(1,1) == ":" then title = title:sub(2) end
+  love.graphics.setColor(UI.dimColor)
+  love.graphics.print(title, 30, 20)
 end
 
 function love.keypressed(key)
