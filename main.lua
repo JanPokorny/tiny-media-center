@@ -269,87 +269,82 @@ end
 -- Navigation
 -- ------------------------------------------------------------
 
-local function navigate(dir)
-  if dir == "in" then
-    local items = getMenuItems()
-    local item = items[state.selectedIndex]
-    if not item then return end
+function navigateIn()
+  local items = getMenuItems()
+  local item = items[state.selectedIndex]
+  if not item then return end
 
-    if item.action == "play" then
-      local videoPath, _ = getVideoPathAndMenu()
-      local filePath = getFilePath(videoPath)
-      local metadata = loadMetadata(videoPath)
-      local playbackOptions = cache.playbackOptions[filePath] or {}
+  if item.action == "play" then
+    local videoPath, _ = getVideoPathAndMenu()
+    local filePath = getFilePath(videoPath)
+    local metadata = loadMetadata(videoPath)
+    local playbackOptions = cache.playbackOptions[filePath] or {}
 
-      local args = {
-        "--fullscreen",
-        "--msg-level=all=no",
-        string.format('--config-dir="%s"', MPV_DIR),
-        string.format('--script="%s"', MPV_DIR .. "/print-position.lua")
-      }
+    local args = {
+      "--fullscreen",
+      "--msg-level=all=no",
+      string.format('--config-dir="%s"', MPV_DIR),
+      string.format('--script="%s"', MPV_DIR .. "/print-position.lua")
+    }
 
-      if metadata.position then
-        table.insert(args, string.format("--start=%s", metadata.position))
-      end
-      if playbackOptions.aid then
-        table.insert(args, string.format("--aid=%s", playbackOptions.aid))
-      end
-      if playbackOptions.sid then
-        table.insert(args, string.format("--sid=%s", playbackOptions.sid))
-      end
-
-      local cmd = string.format('mpv %s "%s"', table.concat(args, " "), filePath)
-      print("running: " .. cmd)
-      local h = io.popen(cmd)
-      local output = h:read("*a")
-      h:close()
-      print("mpv output:\n" .. output)
-      saveMetadata(videoPath, conf.parse(output))
-
-    elseif item.action == "audio_menu" then
-      table.insert(state.path, ":audio")
-      state.selectedIndex = 1
-      state.scrollOffset = 0
-    elseif item.action == "sub_menu" then
-      table.insert(state.path, ":sub")
-      state.selectedIndex = 1
-      state.scrollOffset = 0
-    elseif item.action == "select_audio" then
-      local videoPath, _ = getVideoPathAndMenu()
-      local filePath = getFilePath(videoPath)
-      if not cache.playbackOptions[filePath] then cache.playbackOptions[filePath] = {} end
-      cache.playbackOptions[filePath].aid = item.trackId
-      table.remove(state.path)
-      state.selectedIndex = 2
-      state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
-    elseif item.action == "select_sub" then
-      local videoPath, _ = getVideoPathAndMenu()
-      local filePath = getFilePath(videoPath)
-      if not cache.playbackOptions[filePath] then cache.playbackOptions[filePath] = {} end
-      cache.playbackOptions[filePath].sid = item.trackId
-      table.remove(state.path)
-      state.selectedIndex = 3
-      state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
-    else
-      table.insert(state.path, item.label)
-      state.selectedIndex = 1
-      state.searchQuery = ""
-      state.scrollOffset = 0
+    if metadata.position and tonumber(metadata.position) < tonumber(metadata.duration) - 3 then
+      table.insert(args, string.format("--start=%s", metadata.position))
+    end
+    if playbackOptions.aid then
+      table.insert(args, string.format("--aid=%s", playbackOptions.aid))
+    end
+    if playbackOptions.sid then
+      table.insert(args, string.format("--sid=%s", playbackOptions.sid))
     end
 
-  elseif dir == "out" then
-    if state.searchQuery ~= "" then
-      state.searchQuery = ""
-    elseif #state.path > 0 then
-      table.remove(state.path)
-    end
+    local cmd = string.format('mpv %s "%s"', table.concat(args, " "), filePath)
+    print("running: " .. cmd)
+    local h = io.popen(cmd)
+    local output = h:read("*a")
+    h:close()
+    print("mpv output:\n" .. output)
+    saveMetadata(videoPath, conf.parse(output))
+
+  elseif item.action == "audio_menu" then
+    table.insert(state.path, ":audio")
     state.selectedIndex = 1
     state.scrollOffset = 0
-  elseif dir == "up" then
-    state.selectedIndex = math.max(1, state.selectedIndex - 1)
-  elseif dir == "down" then
-    state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
+  elseif item.action == "sub_menu" then
+    table.insert(state.path, ":sub")
+    state.selectedIndex = 1
+    state.scrollOffset = 0
+  elseif item.action == "select_audio" then
+    local videoPath, _ = getVideoPathAndMenu()
+    local filePath = getFilePath(videoPath)
+    if not cache.playbackOptions[filePath] then cache.playbackOptions[filePath] = {} end
+    cache.playbackOptions[filePath].aid = item.trackId
+    table.remove(state.path)
+    state.selectedIndex = 2
+    state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+  elseif item.action == "select_sub" then
+    local videoPath, _ = getVideoPathAndMenu()
+    local filePath = getFilePath(videoPath)
+    if not cache.playbackOptions[filePath] then cache.playbackOptions[filePath] = {} end
+    cache.playbackOptions[filePath].sid = item.trackId
+    table.remove(state.path)
+    state.selectedIndex = 3
+    state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+  else
+    table.insert(state.path, item.label)
+    state.selectedIndex = 1
+    state.searchQuery = ""
+    state.scrollOffset = 0
   end
+end
+
+function navigateOut()
+  if state.searchQuery ~= "" then
+    state.searchQuery = ""
+  elseif #state.path > 0 then
+    table.remove(state.path)
+  end
+  state.selectedIndex = 1
+  state.scrollOffset = 0
 end
 
 -- ------------------------------------------------------------
@@ -400,10 +395,10 @@ function love.draw()
 end
 
 function love.keypressed(key)
-  if key == "up" then navigate("up")
-  elseif key == "down" then navigate("down")
-  elseif key == "return" then navigate("in")
-  elseif key == "escape" or key == "appback" then navigate("out")
+  if key == "up" then state.selectedIndex = math.max(1, state.selectedIndex - 1)
+  elseif key == "down" then state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
+  elseif key == "return" then navigateIn()
+  elseif key == "escape" or key == "appback" then navigateOut()
   elseif key == "backspace" then
     state.searchQuery = state.searchQuery:sub(1, -2)
     state.selectedIndex = 1
