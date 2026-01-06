@@ -279,12 +279,42 @@ local function getMenuItems()
   if videoPath then
     local filePath = getFilePath(videoPath)
     local tracks = loadTracks(filePath)
+    local metadata = loadMetadata(videoPath)
+    if not metadata.duration and tracks.duration then
+      metadata.duration = tracks.duration
+      saveMetadata(videoPath, metadata)
+    end
+    
     local playbackOptions = cache.playbackOptions[filePath] or {}
 
     local pct = getWatchPercentage(videoPath)
     local playLabel = "play"
-    if pct > 0 then
-      playLabel = "play [" .. pct .. "%]"
+    
+    if pct > 0 or metadata.duration then
+      local parts = {"play ["}
+      
+      if pct > 0 then
+        table.insert(parts, pct .. "%")
+      else
+        table.insert(parts, "0%")
+      end
+      
+      if metadata.duration then
+        local dur = tonumber(metadata.duration)
+        local pos = tonumber(metadata.position) or 0
+        local remaining = dur - pos
+        local endTime = os.time() + remaining
+        local endTimeStr = os.date("%H:%M", endTime)
+        
+        if pct > 0 then
+          table.insert(parts, ", ends at " .. endTimeStr)
+        else
+          table.insert(parts, ", ends at " .. endTimeStr)
+        end
+      end
+      
+      table.insert(parts, "]")
+      playLabel = table.concat(parts)
     end
 
     local items = {
@@ -420,7 +450,10 @@ function navigateIn()
     local output = h:read("*a")
     h:close()
     print("mpv output:\n" .. output)
-    saveMetadata(videoPath, conf.parse(output))
+    for k, v in pairs(conf.parse(output)) do
+      metadata[k] = v
+    end
+    saveMetadata(videoPath, metadata)
   elseif item.action == "play_wii_game" then
     local gamePath = {unpack(state.path)}
     table.insert(gamePath, item.target)
