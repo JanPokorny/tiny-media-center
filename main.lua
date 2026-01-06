@@ -431,7 +431,7 @@ function navigateIn()
     local gamePath = {unpack(state.path)}
     table.insert(gamePath, item.target)
     local filePath = getFilePath(gamePath)
-    local cmd = string.format('dolphin --batch --exec="%s"', filePath)
+    local cmd = string.format('dolphin-emu --batch --exec="%s"', filePath)
     print("running: " .. cmd)
     io.popen(cmd)
   elseif item.action == "audio_menu" then
