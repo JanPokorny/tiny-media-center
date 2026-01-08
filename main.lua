@@ -52,7 +52,7 @@ local function loadMediaTree(path)
         tree[name] = loadMediaTree(full)
       elseif name:match("%.mp4$") or name:match("%.mkv$") or name:match("%.avi$") then
         tree[name] = { type = "video" }
-      elseif name:match("%.iso$") or name:match("%.rvz$")then
+      elseif name:match("%.rvz$") then
         tree[name] = { type = "wii_game" }
       elseif name:match("%.sh$") then
         tree[name] = { type = "script" }
@@ -144,13 +144,6 @@ end
 -- Menu construction
 -- ------------------------------------------------------------
 
-local function buildTrackLabel(prefix, track)
-  local label = prefix .. " " .. track.id
-  if track.lang then label = label .. " [" .. track.lang .. "]" end
-  if track.title then label = label .. " - " .. track.title end
-  if track.channels then label = label .. " (" .. track.channels .. "ch)" end
-  return label
-end
 
 local function sortItems(items)
   table.sort(items, function(a, b)
@@ -203,7 +196,6 @@ local function getMenuItems()
 
   if menuType == ":audio" or menuType == ":sub" then
     local filePath = getFilePath(videoPath)
-    local tracks = loadTracks(filePath)
     local items = {}
 
     if menuType == ":sub" then
@@ -215,21 +207,22 @@ local function getMenuItems()
       })
     end
 
-    for _, track in pairs(tracks) do
-      if (menuType == ":audio" and track.type == "audio")
-      or (menuType == ":sub"   and track.type == "sub") then
-        local label = buildTrackLabel(track.type:sub(1,1), track)
+    for key, value in pairs(loadTracks(filePath)) do
+      local trackType, trackId = key:match("^track_([^_]+)_(.*)$")
+      if trackType and ":" .. trackType == menuType then
         table.insert(items, {
-          label = label,
-          target = label,
-          action = menuType == ":audio" and "select_audio" or "select_sub",
-          trackId = track.id
+          label = value,
+          target = value,
+          action = "select_" .. trackType,
+          trackId = trackId
         })
       end
     end
 
     table.sort(items, function(a, b)
-      return a.trackId < b.trackId
+      if a.trackId == "" then return true end
+      if b.trackId == "" then return false end
+      return tonumber(a.trackId) < tonumber(b.trackId)
     end)
 
     return items
@@ -285,39 +278,20 @@ local function getMenuItems()
     }
 
     -- Audio label
-    local aid = tonumber(playbackOptions.aid)
-    if not aid then
-      for _, t in pairs(tracks) do
-        if t.type == "audio" and t.selected == "yes" then
-          aid = tonumber(t.id)
-          break
-        end
-      end
-    end
-
+    local aid = playbackOptions.aid
     local audioLabel = "audio"
-    if aid and tracks["a:" .. aid] then
-      audioLabel = "audio [" .. (tracks["a:" .. aid].lang or "?") .. "]"
+    if aid and tracks["track_audio_" .. aid] then
+      audioLabel = "audio [" .. tracks["track_audio_" .. aid] .. "]"
     end
     table.insert(items, { label = audioLabel, target = ":audio", action = "audio_menu" })
 
     -- Subtitle label
     local sid = playbackOptions.sid
-    if sid == nil then
-        for _, t in pairs(tracks) do
-            if t.type == "sub" and t.selected == "yes" then
-                sid = t.id
-                break
-            end
-        end
-    end
-    if sid then sid = tostring(sid) end
-
     local subLabel = "subtitles"
     if sid == "" then
       subLabel = "subtitles [none]"
-    elseif sid and tracks["s:" .. sid] then
-      subLabel = "subtitles [" .. (tracks["s:" .. sid].lang or "und") .. "]"
+    elseif sid and tracks["track_sub_" .. sid] then
+      subLabel = "subtitles [" .. tracks["track_sub_" .. sid] .. "]"
     end
     table.insert(items, { label = subLabel, target = ":sub", action = "sub_menu" })
 
