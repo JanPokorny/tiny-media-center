@@ -10,12 +10,7 @@ local state = {
   lastSelectedTarget = nil,
 }
 
-local cache = {
-  tree = {},
-  tracks = {},
-  playbackOptions = {},
-  metadata = {},
-}
+local mediaData = {}
 
 local UI = {
   bgColor = {0, 0, 0},
@@ -35,23 +30,46 @@ local function getFilePath(path)
 end
 
 -- ------------------------------------------------------------
--- Media tree
+-- Metadata IO
 -- ------------------------------------------------------------
 
-local function loadMediaTree(path)
+local function loadStoredMetadata(videoPath)
+  local relativePath = table.concat(videoPath, "/")
+  local content = love.filesystem.read("metadata/" .. relativePath .. ".conf")
+  return conf.parse(content or "")
+end
+
+local function storeMetadata(videoPath, data)
+  local relativePath = table.concat(videoPath, "/")
+  love.filesystem.write("metadata/" .. relativePath .. ".conf", conf.serialize(data))
+end
+
+-- ------------------------------------------------------------
+-- Media Tree Loading
+-- ------------------------------------------------------------
+
+local function loadMediaTree(currentPath, currentFsPath)
   local tree = {}
-  local h = io.popen('ls -1 "' .. path .. '" 2>/dev/null')
+  local h = io.popen('ls -1 "' .. currentFsPath .. '" 2>/dev/null')
   for name in h:lines() do
     if name:sub(1, 1) ~= "." then
-      local full = path .. "/" .. name
-      local d = io.popen('test -d "' .. full .. '" && echo yes')
+      local fullFsPath = currentFsPath .. "/" .. name
+      local newPath = {unpack(currentPath)}
+      table.insert(newPath, name)
+
+      local d = io.popen('test -d "' .. fullFsPath .. '" && echo yes')
       local isDir = d:read("*a") ~= ""
       d:close()
 
       if isDir then
-        tree[name] = loadMediaTree(full)
+        tree[name] = loadMediaTree(newPath, fullFsPath)
+        tree[name].isDir = true
       elseif name:match("%.mp4$") or name:match("%.mkv$") or name:match("%.avi$") then
-        tree[name] = { type = "video" }
+        tree[name] = {
+          type = "video",
+          videoPath = newPath,
+          storedMetadata = loadStoredMetadata(newPath)
+        }
       elseif name:match("%.rvz$") then
         tree[name] = { type = "wii_game" }
       elseif name:match("%.sh$") then
@@ -64,104 +82,85 @@ local function loadMediaTree(path)
 end
 
 -- ------------------------------------------------------------
--- mpv integration
+-- On-demand metadata extraction
 -- ------------------------------------------------------------
 
-local function loadTracks(filePath)
-  if cache.tracks[filePath] then
-    return cache.tracks[filePath]
+local function getFileMetadata(node)
+  if not node.fileMetadata then
+    local h = io.popen(string.format(
+      'mpv --script="%s" --msg-level=all=no "%s" 2>/dev/null',
+      SAVE_DIR .. "/mpv/preflight.lua", getFilePath(node.videoPath)
+    ))
+    node.fileMetadata = conf.parse(h:read("*a"))
+    h:close()
   end
 
-  local h = io.popen(string.format(
-    'mpv --script="%s" --msg-level=all=no "%s" 2>/dev/null',
-    SAVE_DIR .. "/mpv/preflight.lua", filePath
-  ))
-  local out = h:read("*a")
-  h:close()
-
-  local tracks = conf.parse(out)
-  cache.tracks[filePath] = tracks
-  return tracks
-end
-
-local function loadMetadata(videoPath)
-  local relativePath = table.concat(videoPath, "/")
-  
-  if cache.metadata[relativePath] then
-    return cache.metadata[relativePath]
+  -- Sync duration from file metadata to stored metadata if missing
+  if not node.storedMetadata.duration and node.fileMetadata.duration then
+    node.storedMetadata.duration = node.fileMetadata.duration
+    storeMetadata(node.videoPath, node.storedMetadata)
   end
-  
-  local content = love.filesystem.read("metadata/" .. relativePath .. ".conf") 
-  local metadata = conf.parse(content or "")
-  cache.metadata[relativePath] = metadata
-  return metadata
-end
 
-local function saveMetadata(videoPath, data)
-  local relativePath = table.concat(videoPath, "/")
-  love.filesystem.write("metadata/" .. relativePath .. ".conf", conf.serialize(data))
-  cache.metadata[relativePath] = data
-end
-
-local function getWatchPercentage(videoPath)
-  local metadata = loadMetadata(videoPath)
-  if not metadata.duration then return 0 end
-  local pct = math.floor((tonumber(metadata.position or 0) / tonumber(metadata.duration)) * 100 + 0.5)
-  return (pct > 90) and 100 or pct
+  return node.fileMetadata
 end
 
 -- ------------------------------------------------------------
--- Path resolution
+-- Path resolution & Data Access
 -- ------------------------------------------------------------
 
-local function getVideoPathAndMenu()
-  local node = cache.tree
-  local videoIdx
+local function getNodeFromPath(path)
+  local node = mediaData.tree
+  for _, seg in ipairs(path) do
+    if type(node) ~= "table" then return nil end
+    node = node[seg]
+  end
+  return node
+end
 
+local function getVideoNodeAndMenu()
+  local videoIdx, menuType
   for i, seg in ipairs(state.path) do
     if seg:sub(1, 1) == ":" then
       videoIdx = i - 1
+      menuType = seg
       break
     end
-    node = node[seg]
+    local node = getNodeFromPath({unpack(state.path, 1, i)})
     if node and node.type == "video" then
       videoIdx = i
+      menuType = state.path[i+1]
       break
     end
   end
 
   if not videoIdx then return nil, nil end
 
-  local videoPath = {}
-  for i = 1, videoIdx do
-    table.insert(videoPath, state.path[i])
-  end
+  local videoPath = {unpack(state.path, 1, videoIdx)}
+  return getNodeFromPath(videoPath), menuType
+end
 
-  return videoPath, state.path[videoIdx + 1]
+local function getWatchPercentage(node)
+  local metadata = node.storedMetadata
+  if not metadata.duration then return 0 end
+  local pct = math.floor((tonumber(metadata.position or 0) / tonumber(metadata.duration)) * 100 + 0.5)
+  return (pct > 90) and 100 or pct
 end
 
 -- ------------------------------------------------------------
 -- Menu construction
 -- ------------------------------------------------------------
 
-
 local function sortItems(items)
   table.sort(items, function(a, b)
-    if a.isDir and not b.isDir then
-      return true
-    elseif not a.isDir and b.isDir then
-      return false
+    if a.node.isDir and not b.node.isDir then return true
+    elseif not a.node.isDir and b.node.isDir then return false
     end
-    
-    if a.isDir then
-      return a.label < b.label
-    end
-    
-    local aPct = a.watchPct or 0
-    local bPct = b.watchPct or 0
-    local aIsVideo = a.isVideo
-    local bIsVideo = b.isVideo
-    
+
+    if a.node.isDir then return a.label < b.label end
+
+    local aIsVideo = a.node.type == "video"
+    local bIsVideo = b.node.type == "video"
+
     local function getCategory(pct, isVid)
       if not isVid then return 2
       elseif pct >= 1 and pct <= 89 then return 1
@@ -169,45 +168,35 @@ local function sortItems(items)
       else return 3
       end
     end
-    
+
+    local aPct = aIsVideo and getWatchPercentage(a.node) or 0
+    local bPct = bIsVideo and getWatchPercentage(b.node) or 0
+
     local aCat = getCategory(aPct, aIsVideo)
     local bCat = getCategory(bPct, bIsVideo)
-    
-    if aCat ~= bCat then
-      return aCat < bCat
-    end
-    
-    if aCat == 1 then
-      if aPct ~= bPct then
-        return aPct < bPct
-      end
-    end
-    
+
+    if aCat ~= bCat then return aCat < bCat end
+    if aCat == 1 and aPct ~= bPct then return aPct < bPct end
+
     return a.label < b.label
   end)
 end
 
 local function getMenuItems()
-  local videoPath, menuType = getVideoPathAndMenu()
+  local videoNode, menuType = getVideoNodeAndMenu()
 
   -- ----------------------------------------------------------
   -- Track submenus
   -- ----------------------------------------------------------
-
   if menuType == ":audio" or menuType == ":sub" then
-    local filePath = getFilePath(videoPath)
     local items = {}
+    local fileMetadata = getFileMetadata(videoNode)
 
     if menuType == ":sub" then
-      table.insert(items, {
-        label = "none",
-        target = "none",
-        action = "select_sub",
-        trackId = ""
-      })
+      table.insert(items, { label = "none", target = "none", action = "select_sub", trackId = "" })
     end
 
-    for key, value in pairs(loadTracks(filePath)) do
+    for key, value in pairs(fileMetadata) do
       local trackType, trackId = key:match("^track_([^_]+)_(.*)$")
       if trackType and ":" .. trackType == menuType then
         table.insert(items, {
@@ -219,131 +208,80 @@ local function getMenuItems()
       end
     end
 
-    table.sort(items, function(a, b)
+    table.sort(items, function(a, b) 
       if a.trackId == "" then return true end
       if b.trackId == "" then return false end
       return tonumber(a.trackId) < tonumber(b.trackId)
     end)
-
     return items
   end
 
   -- ----------------------------------------------------------
   -- Video menu
   -- ----------------------------------------------------------
-
-  if videoPath then
-    local filePath = getFilePath(videoPath)
-    local tracks = loadTracks(filePath)
-    local metadata = loadMetadata(videoPath)
-    if not metadata.duration and tracks.duration then
-      metadata.duration = tracks.duration
-      saveMetadata(videoPath, metadata)
-    end
+  if videoNode then
+    local fileMetadata = getFileMetadata(videoNode)
+        local storedMetadata = videoNode.storedMetadata
     
-    local playbackOptions = cache.playbackOptions[filePath] or {}
-
-    local pct = getWatchPercentage(videoPath)
-    local playLabel = "play"
+        local pct = getWatchPercentage(videoNode)
+        local playLabel = "play"
     
-    if pct > 0 or metadata.duration then
-      local parts = {"play ["}
-      
-      if pct > 0 then
-        table.insert(parts, pct .. "%")
-      else
-        table.insert(parts, "0%")
-      end
-      
-      if metadata.duration then
-        local dur = tonumber(metadata.duration)
-        local pos = tonumber(metadata.position) or 0
-        local remaining = dur - pos
-        local endTime = os.time() + remaining
-        local endTimeStr = os.date("%H:%M", endTime)
-        
-        if pct > 0 then
-          table.insert(parts, ", ends at " .. endTimeStr)
-        else
-          table.insert(parts, ", ends at " .. endTimeStr)
+        if pct > 0 or storedMetadata.duration then
+          local parts = {"play ["}
+          table.insert(parts, (pct > 0 and pct or 0) .. "%")
+          if storedMetadata.duration then
+            local remaining = tonumber(storedMetadata.duration) - (tonumber(storedMetadata.position) or 0)
+            table.insert(parts, ", ends at " .. os.date("%H:%M", os.time() + remaining))
+          end
+          table.insert(parts, "]")
+          playLabel = table.concat(parts)
         end
-      end
-      
-      table.insert(parts, "]")
-      playLabel = table.concat(parts)
-    end
+    
+        local audioLabel = "audio"
+        if storedMetadata.aid and fileMetadata["track_audio_" .. storedMetadata.aid] then
+          audioLabel = "audio [" .. fileMetadata["track_audio_" .. storedMetadata.aid] .. "]"
+        end
+    
+        local subLabel = "subtitles"
+        if storedMetadata.sid == "" then
+          subLabel = "subtitles [none]"
+        elseif storedMetadata.sid and fileMetadata["track_sub_" .. storedMetadata.sid] then
+          subLabel = "subtitles [" .. fileMetadata["track_sub_" .. storedMetadata.sid] .. "]"
+        end
 
-    local items = {
-      { label = playLabel, target = "play", action = "play" }
+    return {
+      { label = playLabel, target = "play", action = "play", node = videoNode },
+      { label = audioLabel, target = ":audio", action = "audio_menu", node = videoNode },
+      { label = subLabel, target = ":sub", action = "sub_menu", node = videoNode },
     }
-
-    -- Audio label
-    local aid = playbackOptions.aid
-    local audioLabel = "audio"
-    if aid and tracks["track_audio_" .. aid] then
-      audioLabel = "audio [" .. tracks["track_audio_" .. aid] .. "]"
-    end
-    table.insert(items, { label = audioLabel, target = ":audio", action = "audio_menu" })
-
-    -- Subtitle label
-    local sid = playbackOptions.sid
-    local subLabel = "subtitles"
-    if sid == "" then
-      subLabel = "subtitles [none]"
-    elseif sid and tracks["track_sub_" .. sid] then
-      subLabel = "subtitles [" .. tracks["track_sub_" .. sid] .. "]"
-    end
-    table.insert(items, { label = subLabel, target = ":sub", action = "sub_menu" })
-
-    return items
   end
 
   -- ----------------------------------------------------------
   -- Directory listing
   -- ----------------------------------------------------------
-
-  local node = cache.tree
-  for _, seg in ipairs(state.path) do
-    node = node[seg]
-    if not node then return {} end
-  end
+  local dirNode = getNodeFromPath(state.path)
+  if not dirNode then return {} end
 
   local items = {}
-  for name, child in pairs(node) do
-    local item = { 
-      label = name,
-      target = name
-    }
-    
-    if type(child) == "table" and not child.type then
-      item.isDir = true
-    elseif child.type == "video" then
-      item.isVideo = true
-      local videoPath = {}
-      for _, seg in ipairs(state.path) do
-        table.insert(videoPath, seg)
-      end
-      table.insert(videoPath, name)
-      
-      local pct = getWatchPercentage(videoPath)
-      item.watchPct = pct
-      
-      if pct > 0 then
-        item.label = name .. " [" .. pct .. "%]"
-      end
-    elseif child.type == "wii_game" then
-      item.isWiiGame = true
-      item.action = "play_wii_game"
-    elseif child.type == "script" then
-      item.isScript = true
-      item.action = "run_script"
-    end
-    
-    table.insert(items, item)
-  end
-  
-  sortItems(items)
+  for name, childNode in pairs(dirNode) do
+    if name ~= 'isDir' then
+        local item = { label = name, target = name, node = childNode }
 
+        if childNode.type == "video" then
+            local pct = getWatchPercentage(childNode)
+            if pct > 0 then
+                item.label = name .. " [" .. pct .. "%]"
+            end
+        elseif childNode.type == "wii_game" then
+            item.action = "play_wii_game"
+        elseif childNode.type == "script" then
+            item.action = "run_script"
+        end
+        table.insert(items, item)
+    end
+  end
+
+  sortItems(items)
   return items
 end
 
@@ -357,29 +295,24 @@ function navigateIn()
   if not item then return end
 
   state.lastSelectedTarget = item.target
+  local action = item.action or "browse"
+  local node = item.node
 
-  if item.action == "play" then
-    local videoPath, _ = getVideoPathAndMenu()
-    local filePath = getFilePath(videoPath)
-    local metadata = loadMetadata(videoPath)
-    local playbackOptions = cache.playbackOptions[filePath] or {}
+  if action == "play" then
+    local filePath = getFilePath(node.videoPath)
+    local storedMetadata = node.storedMetadata
 
     local args = {
-      "--fullscreen",
-      "--msg-level=all=no",
+      "--fullscreen", "--msg-level=all=no",
       string.format('--config-dir="%s"', SAVE_DIR .. "/mpv"),
       string.format('--script="%s"', SAVE_DIR .. "/mpv/runtime.lua")
     }
 
-    if metadata.position and tonumber(metadata.position) < tonumber(metadata.duration) - 3 then
-      table.insert(args, string.format("--start=%s", metadata.position))
+    if storedMetadata.position and tonumber(storedMetadata.position) < tonumber(storedMetadata.duration) - 3 then
+      table.insert(args, string.format("--start=%s", storedMetadata.position))
     end
-    if playbackOptions.aid then
-      table.insert(args, string.format("--aid=%s", playbackOptions.aid))
-    end
-    if playbackOptions.sid and #playbackOptions.sid > 0 then
-      table.insert(args, string.format("--sid=%s", playbackOptions.sid))
-    end
+    if storedMetadata.aid then table.insert(args, string.format("--aid=%s", storedMetadata.aid)) end
+    if storedMetadata.sid and #storedMetadata.sid > 0 then table.insert(args, string.format("--sid=%s", storedMetadata.sid)) end
 
     local cmd = string.format('mpv %s "%s"', table.concat(args, " "), filePath)
     print("running: " .. cmd)
@@ -387,52 +320,35 @@ function navigateIn()
     local output = h:read("*a")
     h:close()
     print("mpv output:\n" .. output)
-    for k, v in pairs(conf.parse(output)) do
-      metadata[k] = v
-    end
-    saveMetadata(videoPath, metadata)
-  elseif item.action == "play_wii_game" then
-    local gamePath = {unpack(state.path)}
-    table.insert(gamePath, item.target)
-    local filePath = getFilePath(gamePath)
-    local cmd = string.format('dolphin-emu --batch --exec="%s"', filePath)
-    print("running: " .. cmd)
-    io.popen(cmd)
-  elseif item.action == "run_script" then
-    local scriptPath = {unpack(state.path)}
-    table.insert(scriptPath, item.target)
-    local filePath = getFilePath(scriptPath)
-    local cmd = string.format('bash "%s"', filePath)
-    print("running: " .. cmd)
-    io.popen(cmd)
-  elseif item.action == "audio_menu" then
-    table.insert(state.path, ":audio")
-    state.selectedIndex = 1
-    state.scrollOffset = 0
-  elseif item.action == "sub_menu" then
-    table.insert(state.path, ":sub")
-    state.selectedIndex = 1
-    state.scrollOffset = 0
-  elseif item.action == "select_audio" then
-    local videoPath, _ = getVideoPathAndMenu()
-    local filePath = getFilePath(videoPath)
-    if not cache.playbackOptions[filePath] then cache.playbackOptions[filePath] = {} end
-    cache.playbackOptions[filePath].aid = item.trackId
-    table.remove(state.path)
-    state.selectedIndex = 2
-    state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
-  elseif item.action == "select_sub" then
-    local videoPath, _ = getVideoPathAndMenu()
-    local filePath = getFilePath(videoPath)
-    if not cache.playbackOptions[filePath] then cache.playbackOptions[filePath] = {} end
-    cache.playbackOptions[filePath].sid = item.trackId
-    table.remove(state.path)
-    state.selectedIndex = 3
-    state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
-  else
+
+    local runtimeMetadata = conf.parse(output)
+    for k, v in pairs(runtimeMetadata) do node.storedMetadata[k] = v end
+    storeMetadata(node.videoPath, node.storedMetadata)
+
+  elseif action == "play_wii_game" or action == "run_script" then
+    local path = {unpack(state.path), item.target}
+    local cmd = (action == "play_wii_game") and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
+    io.popen(string.format(cmd, getFilePath(path)))
+  elseif action == "audio_menu" or action == "sub_menu" then
     table.insert(state.path, item.target)
-    state.selectedIndex = 1
-    state.scrollOffset = 0
+    state.selectedIndex, state.scrollOffset = 1, 0
+  elseif action == "select_audio" then
+    local videoNode, _ = getVideoNodeAndMenu()
+    videoNode.storedMetadata.aid = item.trackId
+    storeMetadata(videoNode.videoPath, videoNode.storedMetadata)
+    table.remove(state.path) -- Go back to video menu
+    state.selectedIndex = 2 -- Select audio menu item (index 2)
+    state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+  elseif action == "select_sub" then
+    local videoNode, _ = getVideoNodeAndMenu()
+    videoNode.storedMetadata.sid = item.trackId
+    storeMetadata(videoNode.videoPath, videoNode.storedMetadata)
+    table.remove(state.path) -- Go back to video menu
+    state.selectedIndex = 3 -- Select subtitle menu item (index 3)
+    state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+  else -- browse
+    table.insert(state.path, item.target)
+    state.selectedIndex, state.scrollOffset = 1, 0
   end
 end
 
@@ -440,10 +356,10 @@ function navigateOut()
   if #state.path > 0 then
     local lastSegment = state.path[#state.path]
     table.remove(state.path)
-    
+
     local items = getMenuItems()
     state.selectedIndex = 1
-    
+
     for i, item in ipairs(items) do
       if item.target == lastSegment then
         state.selectedIndex = i
@@ -468,7 +384,7 @@ function love.load()
   love.graphics.setFont(love.graphics.newFont("KodeMono-Regular.ttf", UI.fontSize))
   love.graphics.setBackgroundColor(UI.bgColor)
   love.mouse.setVisible(false)
-  cache.tree = loadMediaTree(MEDIA_ROOT)
+  mediaData.tree = loadMediaTree({}, MEDIA_ROOT)
 end
 
 function love.update(dt)
@@ -503,8 +419,9 @@ function love.keypressed(key)
   elseif #key == 1 then
     local items = getMenuItems()
     for i = 0, #items - 1 do
-      if items[1 + (state.selectedIndex + i) % #items].label:lower():sub(1, 1):lower() == key then
-        state.selectedIndex = 1 + (state.selectedIndex + i) % #items
+      local index = 1 + (state.selectedIndex + i) % #items
+      if items[index] and items[index].label:lower():sub(1, 1):lower() == key then
+        state.selectedIndex = index
         break
       end
     end
