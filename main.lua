@@ -196,6 +196,17 @@ local function getMenuItems()
   return items
 end
 
+local function targetOffset()
+  local w, h = love.graphics.getDimensions()
+  local itemCount = #getMenuItems()
+  local listHeight = itemCount * UI.itemHeight
+  return listHeight <= h and (listHeight - UI.itemHeight) / 2 or (state.selectedIndex - 1) * UI.itemHeight
+end
+
+local function resetScroll()
+  state.scrollOffset = targetOffset() -  UI.itemHeight
+end
+
 -- Navigation
 function navigateIn()
   local items = getMenuItems()
@@ -237,7 +248,8 @@ function navigateIn()
     
   elseif action == "audio_menu" or action == "sub_menu" then
     table.insert(state.path, item.target)
-    state.selectedIndex, state.scrollOffset = 1, 0
+    state.selectedIndex = 1
+    resetScroll()
     
   elseif action == "select_audio" or action == "select_sub" then
     local video = getVideoContext()
@@ -245,11 +257,12 @@ function navigateIn()
     saveMetadata(video.path, video.meta)
     table.remove(state.path)
     state.selectedIndex = action == "select_audio" and 2 or 3
-    state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+    resetScroll()
     
   else -- browse
     table.insert(state.path, item.target)
-    state.selectedIndex, state.scrollOffset = 1, 0
+    state.selectedIndex = 1
+    resetScroll()
   end
 end
 
@@ -265,7 +278,7 @@ function navigateOut()
         break
       end
     end
-    state.scrollOffset = (state.selectedIndex - 1) * UI.itemHeight
+    resetScroll()
   end
 end
 
@@ -283,7 +296,7 @@ function love.load()
 end
 
 function love.update(dt)
-  state.scrollOffset = state.scrollOffset + (((state.selectedIndex - 1) * UI.itemHeight) - state.scrollOffset) * 10 * dt
+  state.scrollOffset = state.scrollOffset + (targetOffset() - state.scrollOffset) * 10 * dt
 end
 
 function love.draw()
