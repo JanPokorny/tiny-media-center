@@ -134,22 +134,17 @@ local function getMenuItems()
   if video then
     local fm, meta = getFileMeta(video), video.meta
     local pct = watchPct(video)
-    local playLabel = "play"
+    local playLabel = "Play"
     
     if pct > 0 or meta.duration then
-      local parts = {"play [", pct .. "%"}
-      if meta.duration then
-        local remaining = tonumber(meta.duration) - (tonumber(meta.position) or 0)
-        table.insert(parts, ", ends at " .. os.date("%H:%M", os.time() + remaining))
-      end
-      playLabel = table.concat(parts) .. "]"
+      playLabel = playLabel .. " [" .. pct .. "%" .. (meta.duration and ", ends at " .. os.date("%H:%M", os.time() + tonumber(meta.duration) - (tonumber(meta.position) or 0)) or "") .. "]"
     end
     
     local audioLabel = meta.aid and fm["track_audio_" .. meta.aid] 
-      and "audio [" .. fm["track_audio_" .. meta.aid] .. "]" or "audio"
+      and "Audio [" .. fm["track_audio_" .. meta.aid] .. "]" or "Audio"
     
-    local subLabel = meta.sid == "" and "subtitles [none]"
-      or (meta.sid and fm["track_sub_" .. meta.sid] and "subtitles [" .. fm["track_sub_" .. meta.sid] .. "]" or "subtitles")
+    local subLabel = meta.sid == "" and "Subtitles [none]"
+      or (meta.sid and fm["track_sub_" .. meta.sid] and "Subtitles [" .. fm["track_sub_" .. meta.sid] .. "]" or "Subtitles")
     
     return {
       {label = playLabel, target = "play", action = "play", node = video},
@@ -192,7 +187,7 @@ local function targetOffset()
 end
 
 local function resetScroll()
-  state.scrollOffset = targetOffset() -  UI.itemHeight
+  state.scrollOffset = targetOffset() - UI.itemHeight * 0.5
 end
 
 function navigateIn()
