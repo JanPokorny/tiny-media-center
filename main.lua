@@ -316,3 +316,11 @@ function love.keypressed(key)
     end
   end
 end
+
+function love.mousepressed(x, y, button, istouch, presses)
+  if button == 1 then
+    navigateIn()
+  elseif button == 2 then
+    navigateOut()
+  end
+end
