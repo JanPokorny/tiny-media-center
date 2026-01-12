@@ -11,6 +11,10 @@ local UI = {
   fontSize = 72, itemHeight = 81
 }
 
+local function stripExtension(filename)
+  return filename:match("(.+)%.[^.]+$") or filename
+end
+
 local function loadMetadata(videoPath)
   return conf.parse(love.filesystem.read("metadata/" .. table.concat(videoPath, "/") .. ".conf") or "")
 end
@@ -161,11 +165,12 @@ local function getMenuItems()
   local items = {}
   for name, child in pairs(dir) do
     if name ~= 'isDir' then
-      local item = {label = name, target = name, node = child}
+      local displayName = stripExtension(name)
+      local item = {label = displayName, target = name, node = child}
       
       if child.type == "video" then
         local pct = watchPct(child)
-        if pct > 0 then item.label = name .. " [" .. pct .. "%]" end
+        if pct > 0 then item.label = displayName .. " [" .. pct .. "%]" end
       elseif child.type == "wii_game" then
         item.action = "play_wii_game"
       elseif child.type == "script" then
@@ -393,6 +398,7 @@ function love.draw()
 
   local title = state.path[#state.path] or "tiny media center"
   if title:sub(1, 1) == ":" then title = title:sub(2) end
+  title = stripExtension(title)
   love.graphics.setColor(UI.dimColor)
   love.graphics.print(title, 0, 0)
 end
