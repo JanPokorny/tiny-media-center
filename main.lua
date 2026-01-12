@@ -306,11 +306,17 @@ function love.draw()
     love.graphics.setColor(i == state.selectedIndex and UI.accentColor or UI.textColor)
     love.graphics.print((i == state.selectedIndex and "> " or "  ") .. item.label, 50, y)
   end
+
+  local headerHeight = UI.itemHeight * 1.2
+  love.graphics.setColor(0, 0, 0)
+  love.graphics.rectangle("fill", 0, 0, w, headerHeight)
+  love.graphics.draw(love.graphics.newMesh({{0, headerHeight, 0, 0, 0, 0, 0, 255}, {w, headerHeight, 0, 0, 0, 0, 0, 255}, {w, h * 0.3, 0, 0, 0, 0, 0, 0}, {0, h * 0.3, 0, 0, 0, 0, 0, 0}}, "fan"), 0, 0)
+  love.graphics.draw(love.graphics.newMesh({{0, h * 0.7, 0, 0, 0, 0, 0, 0}, {w, h * 0.7, 0, 0, 0, 0, 0, 0}, {w, h, 0, 0, 0, 0, 0, 255}, {0, h, 0, 0, 0, 0, 0, 255}}, "fan"), 0, 0)
   
   local title = state.path[#state.path] or "tiny media center"
   if title:sub(1, 1) == ":" then title = title:sub(2) end
   love.graphics.setColor(UI.dimColor)
-  love.graphics.print(title, 30, 20)
+  love.graphics.print(title, 0, 0)
 end
 
 function love.keypressed(key)
