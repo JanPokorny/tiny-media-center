@@ -6,25 +6,19 @@ local SAVE_DIR = love.filesystem.getSaveDirectory()
 local state = {path = {}, selectedIndex = 1, scrollOffset = 0}
 local mediaTree = {}
 local UI = {
-  bgColor = {0, 0, 0}, textColor = {0.67, 0.67, 0.67},
-  accentColor = {1, 0.8, 0}, dimColor = {0.27, 0.27, 0.27},
+  bgColor = {0, 0, 0}, textColor = {1, 1, 1},
+  accentColor = {1, 0.8, 0}, dimColor = {0.5, 0.5, 0.5},
   fontSize = 72, itemHeight = 81
 }
 
--- Metadata IO
-local function metadataPath(videoPath)
-  return "metadata/" .. table.concat(videoPath, "/") .. ".conf"
-end
-
 local function loadMetadata(videoPath)
-  return conf.parse(love.filesystem.read(metadataPath(videoPath)) or "")
+  return conf.parse(love.filesystem.read("metadata/" .. table.concat(videoPath, "/") .. ".conf") or "")
 end
 
 local function saveMetadata(videoPath, data)
-  love.filesystem.write(metadataPath(videoPath), conf.serialize(data))
+  love.filesystem.write("metadata/" .. table.concat(videoPath, "/") .. ".conf", conf.serialize(data))
 end
 
--- Media tree loading
 local function loadTree(path, fsPath)
   local tree = {}
   local h = io.popen('ls -1 "' .. fsPath .. '" 2>/dev/null')
@@ -51,7 +45,6 @@ local function loadTree(path, fsPath)
   return tree
 end
 
--- Get file metadata via mpv
 local function getFileMeta(node)
   if not node.fileMeta then
     local h = io.popen(string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null',
@@ -67,7 +60,6 @@ local function getFileMeta(node)
   return node.fileMeta
 end
 
--- Navigate tree by path
 local function getNode(path)
   local node = mediaTree
   for _, seg in ipairs(path) do
@@ -77,7 +69,6 @@ local function getNode(path)
   return node
 end
 
--- Find video node and menu type from current path
 local function getVideoContext()
   for i, seg in ipairs(state.path) do
     if seg:sub(1, 1) == ":" then
@@ -91,31 +82,23 @@ local function getVideoContext()
   return nil, nil
 end
 
--- Calculate watch percentage
 local function watchPct(node)
+  if node.type ~= "video" then return 0 end -- TODO: properly calculate dir watch percentage
   if not node.meta.duration then return 0 end
   local pct = math.floor((tonumber(node.meta.position or 0) / tonumber(node.meta.duration)) * 100 + 0.5)
-  return pct > 90 and 100 or pct
+  return pct >= 90 and 100 or pct
 end
 
--- Sort menu items
 local function sortItems(items)
   table.sort(items, function(a, b)
-    if a.node.isDir ~= b.node.isDir then return a.node.isDir end
-    if a.node.isDir then return a.label < b.label end
-    
-    local aVideo, bVideo = a.node.type == "video", b.node.type == "video"
-    local aPct, bPct = aVideo and watchPct(a.node) or 0, bVideo and watchPct(b.node) or 0
-    local aCat = not aVideo and 2 or (aPct >= 1 and aPct <= 89 and 1 or (aPct == 0 and 2 or 3))
-    local bCat = not bVideo and 2 or (bPct >= 1 and bPct <= 89 and 1 or (bPct == 0 and 2 or 3))
-    
+    local aPct, bPct = watchPct(a.node), watchPct(b.node)
+    local aCat = aPct >= 1 and aPct <= 89 and 1 or (aPct == 0 and 2 or 3)
+    local bCat = bPct >= 1 and bPct <= 89 and 1 or (bPct == 0 and 2 or 3)
     if aCat ~= bCat then return aCat < bCat end
-    if aCat == 1 and aPct ~= bPct then return aPct < bPct end
     return a.label < b.label
   end)
 end
 
--- Generate menu items
 local function getMenuItems()
   local video, menu = getVideoContext()
   
@@ -200,14 +183,13 @@ local function targetOffset()
   local w, h = love.graphics.getDimensions()
   local itemCount = #getMenuItems()
   local listHeight = itemCount * UI.itemHeight
-  return listHeight <= h and (listHeight - UI.itemHeight) / 2 or (state.selectedIndex - 1) * UI.itemHeight
+  return listHeight <= h * 0.8 and (listHeight - UI.itemHeight) / 2 or (state.selectedIndex - 1) * UI.itemHeight
 end
 
 local function resetScroll()
   state.scrollOffset = targetOffset() -  UI.itemHeight
 end
 
--- Navigation
 function navigateIn()
   local items = getMenuItems()
   local item = items[state.selectedIndex]
@@ -267,19 +249,18 @@ function navigateIn()
 end
 
 function navigateOut()
-  if #state.path > 0 then
-    local last = state.path[#state.path]
-    table.remove(state.path)
-    
-    state.selectedIndex = 1
-    for i, item in ipairs(getMenuItems()) do
-      if item.target == last then
-        state.selectedIndex = i
-        break
-      end
+  if #state.path < 0 then return end
+  local last = state.path[#state.path]
+  table.remove(state.path)
+  
+  state.selectedIndex = 1
+  for i, item in ipairs(getMenuItems()) do
+    if item.target == last then
+      state.selectedIndex = i
+      break
     end
-    resetScroll()
   end
+  resetScroll()
 end
 
 function createLiveBackground(width, height)
@@ -363,7 +344,6 @@ function love.update(dt)
   background:update(dt)
 end
 
--- This shader calculates transparency based on the Y coordinate of the pixel
 local listFadeShader = love.graphics.newShader[[
   extern number screen_height;
   extern number header_height;
