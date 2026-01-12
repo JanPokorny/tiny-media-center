@@ -286,8 +286,8 @@ function createLiveBackground(width, height)
   local bg = {
     width = width,
     height = height,
-    starCount = 300,
-    connectionDist = 250,
+    starCount = 150,
+    connectionDist = 120,
     speed = 15,
     stars = {},
   }
