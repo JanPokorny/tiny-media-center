@@ -36,7 +36,7 @@ local function loadTree(path, fsPath)
       if isDir then
         tree[name] = loadTree(newPath, fullPath)
         tree[name].isDir = true
-      elseif name:match("%.mp4$") or name:match("%.mkv$") or name:match("%.avi$") then
+      elseif name:match("%.mp4$") or name:match("%.mkv$") or name:match("%.avi$") or name:match("%.mp3$") then
         tree[name] = {type = "video", path = newPath, meta = loadMetadata(newPath)}
       elseif name:match("%.rvz$") then
         tree[name] = {type = "wii_game"}
@@ -210,7 +210,8 @@ function navigateIn()
       "--osd-font-provider=none",
       "--osd-font-size=60",
       string.format('--config-dir="%s/mpv"', SAVE_DIR),
-      string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR)
+      string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR),
+      string.format('--script="%s/mpv/visualiser.lua"', SAVE_DIR),
     }
     
     if node.meta.position and tonumber(node.meta.position) < tonumber(node.meta.duration) - 3 then
@@ -333,7 +334,7 @@ local background = nil
 function love.load()
   love.filesystem.createDirectory("metadata")
   love.filesystem.createDirectory("mpv")
-  for _, file in ipairs({"preflight.lua", "runtime.lua", "input.conf", "subfont.ttf"}) do
+  for _, file in ipairs({"preflight.lua", "runtime.lua", "visualiser.lua", "input.conf", "subfont.ttf"}) do
     love.filesystem.write("mpv/" .. file, love.filesystem.read("attachments/mpv/" .. file))
   end
   love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", UI.fontSize))
