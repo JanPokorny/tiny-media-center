@@ -205,7 +205,11 @@ function navigateIn()
       "--save-position-on-quit=no",
       "--input-default-bindings=no",
       "--osd-on-seek=msg-bar",
-      string.format('--input-conf="%s/mpv/input.conf"', SAVE_DIR),
+      "--sub-font-provider=none",
+      "--sub-font-size=60",
+      "--osd-font-provider=none",
+      "--osd-font-size=60",
+      string.format('--config-dir="%s/mpv"', SAVE_DIR),
       string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR)
     }
     
@@ -218,6 +222,7 @@ function navigateIn()
     local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "), 
       MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
     local output = h:read("*a")
+    print(output)
     h:close()
     
     for k, v in pairs(conf.parse(output)) do node.meta[k] = v end
@@ -328,10 +333,10 @@ local background = nil
 function love.load()
   love.filesystem.createDirectory("metadata")
   love.filesystem.createDirectory("mpv")
-  for _, file in ipairs({"preflight.lua", "runtime.lua", "input.conf"}) do
+  for _, file in ipairs({"preflight.lua", "runtime.lua", "input.conf", "subfont.ttf"}) do
     love.filesystem.write("mpv/" .. file, love.filesystem.read("attachments/mpv/" .. file))
   end
-  love.graphics.setFont(love.graphics.newFont("KodeMono-Regular.ttf", UI.fontSize))
+  love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", UI.fontSize))
   love.graphics.setBackgroundColor(UI.bgColor)
   love.mouse.setVisible(false)
   mediaTree = loadTree({}, MEDIA_ROOT)
