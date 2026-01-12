@@ -207,8 +207,12 @@ function navigateIn()
   if action == "play" then
     local node = item.node
     local args = {
-      "--fullscreen", "--msg-level=all=no",
-      string.format('--config-dir="%s/mpv"', SAVE_DIR),
+      "--fullscreen",
+      "--msg-level=all=no",
+      "--save-position-on-quit=no",
+      "--input-default-bindings=no",
+      "--osd-on-seek=msg-bar",
+      string.format('--input-conf="%s/mpv/input.conf"', SAVE_DIR),
       string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR)
     }
     
@@ -269,7 +273,7 @@ end
 function love.load()
   love.filesystem.createDirectory("metadata")
   love.filesystem.createDirectory("mpv")
-  for _, file in ipairs({"preflight.lua", "runtime.lua", "mpv.conf", "input.conf"}) do
+  for _, file in ipairs({"preflight.lua", "runtime.lua", "input.conf"}) do
     love.filesystem.write("mpv/" .. file, love.filesystem.read("attachments/mpv/" .. file))
   end
   love.graphics.setFont(love.graphics.newFont("KodeMono-Regular.ttf", UI.fontSize))
