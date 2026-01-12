@@ -282,7 +282,68 @@ function navigateOut()
   end
 end
 
+function createLiveBackground(width, height)
+  local bg = {
+    width = width,
+    height = height,
+    starCount = 300,
+    connectionDist = 250,
+    speed = 15,
+    stars = {},
+  }
+
+  for i = 1, bg.starCount do
+    table.insert(bg.stars, {
+      x = love.math.random(0, width),
+      y = love.math.random(0, height),
+      vx = love.math.random(-100, 100) / 100 * bg.speed,
+      vy = love.math.random(-100, 100) / 100 * bg.speed,
+      size = love.math.random(1, 3)
+    })
+  end
+
+  function bg:update(dt)
+    for _, star in ipairs(self.stars) do
+      star.x = star.x + (star.vx * dt)
+      star.y = star.y + (star.vy * dt)
+      if star.x < -50 then star.x = self.width + 50 end
+      if star.x > self.width + 50 then star.x = -50 end
+      if star.y < -50 then star.y = self.height + 50 end
+      if star.y > self.height + 50 then star.y = -50 end
+    end
+  end
+
+  function bg:draw()
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setBlendMode("add")
+    for i, s1 in ipairs(self.stars) do
+      love.graphics.setColor(0.5, 0.6, 0.7, 0.4)
+      love.graphics.circle("fill", s1.x, s1.y, s1.size)
+      for j = i + 1, #self.stars do
+        local s2 = self.stars[j]
+        local dx = s1.x - s2.x
+        local dy = s1.y - s2.y
+        local distSq = dx*dx + dy*dy
+        local maxDistSq = self.connectionDist^2
+
+        if distSq < maxDistSq then
+          local alpha = 1 - (distSq / maxDistSq)
+          love.graphics.setLineWidth(1)
+          love.graphics.setColor(0.2, 0.5, 0.6, alpha * 0.2)
+          love.graphics.line(s1.x, s1.y, s2.x, s2.y)
+        end
+      end
+    end
+    love.graphics.setBlendMode("alpha")
+  end
+
+  return bg
+end
+
 -- LOVE callbacks
+
+local background = nil
+
 function love.load()
   love.filesystem.createDirectory("metadata")
   love.filesystem.createDirectory("mpv")
@@ -293,26 +354,63 @@ function love.load()
   love.graphics.setBackgroundColor(UI.bgColor)
   love.mouse.setVisible(false)
   mediaTree = loadTree({}, MEDIA_ROOT)
+  love.math.setRandomSeed(os.time())
+  background = createLiveBackground(love.graphics.getWidth(), love.graphics.getHeight())
 end
 
 function love.update(dt)
   state.scrollOffset = state.scrollOffset + (targetOffset() - state.scrollOffset) * 10 * dt
+  background:update(dt)
 end
 
+-- This shader calculates transparency based on the Y coordinate of the pixel
+local listFadeShader = love.graphics.newShader[[
+  extern number screen_height;
+  extern number header_height;
+  extern number fade_top_size;
+  extern number fade_bot_size;
+
+  vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
+    vec4 pixel = Texel(texture, texture_coords) * color;
+    number alpha = 1.0;
+    if (screen_coords.y < header_height) {
+      alpha = 0.0;
+    } else if (screen_coords.y < header_height + fade_top_size) {
+      alpha = (screen_coords.y - header_height) / fade_top_size;
+    }
+
+    if (screen_coords.y > screen_height - fade_bot_size) {
+      number bot_alpha = (screen_height - screen_coords.y) / fade_bot_size;
+      alpha = min(alpha, bot_alpha);
+    }
+
+    pixel.a = pixel.a * alpha;
+    return pixel;
+  }
+]]
+
 function love.draw()
+  background:draw()
+
   local w, h = love.graphics.getDimensions()
+  local headerHeight = UI.itemHeight * 1.2
+
+  local fadeTopSize = (h * 0.3) - headerHeight
+  local fadeBotSize = h - (h * 0.7)
+  listFadeShader:send("screen_height", h)
+  listFadeShader:send("header_height", headerHeight)
+  listFadeShader:send("fade_top_size", fadeTopSize)
+  listFadeShader:send("fade_bot_size", fadeBotSize)
+  love.graphics.setShader(listFadeShader)
   for i, item in ipairs(getMenuItems()) do
     local y = h / 2 - state.scrollOffset + (i - 1) * UI.itemHeight
-    love.graphics.setColor(i == state.selectedIndex and UI.accentColor or UI.textColor)
-    love.graphics.print((i == state.selectedIndex and "> " or "  ") .. item.label, 50, y)
+    if y > -UI.itemHeight and y < h then
+        love.graphics.setColor(i == state.selectedIndex and UI.accentColor or UI.textColor)
+        love.graphics.print((i == state.selectedIndex and "> " or "  ") .. item.label, 50, y)
+    end
   end
+  love.graphics.setShader()
 
-  local headerHeight = UI.itemHeight * 1.2
-  love.graphics.setColor(0, 0, 0)
-  love.graphics.rectangle("fill", 0, 0, w, headerHeight)
-  love.graphics.draw(love.graphics.newMesh({{0, headerHeight, 0, 0, 0, 0, 0, 255}, {w, headerHeight, 0, 0, 0, 0, 0, 255}, {w, h * 0.3, 0, 0, 0, 0, 0, 0}, {0, h * 0.3, 0, 0, 0, 0, 0, 0}}, "fan"), 0, 0)
-  love.graphics.draw(love.graphics.newMesh({{0, h * 0.7, 0, 0, 0, 0, 0, 0}, {w, h * 0.7, 0, 0, 0, 0, 0, 0}, {w, h, 0, 0, 0, 0, 0, 255}, {0, h, 0, 0, 0, 0, 0, 255}}, "fan"), 0, 0)
-  
   local title = state.path[#state.path] or "tiny media center"
   if title:sub(1, 1) == ":" then title = title:sub(2) end
   love.graphics.setColor(UI.dimColor)
