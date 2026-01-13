@@ -215,7 +215,6 @@ function navigateIn()
     local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "), 
       MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
     local output = h:read("*a")
-    print(output)
     h:close()
     
     for k, v in pairs(conf.parse(output)) do node.meta[k] = v end
