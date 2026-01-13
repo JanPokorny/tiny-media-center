@@ -318,7 +318,7 @@ end
 
 -- LOVE callbacks
 
-local background = nil
+local background = createLiveBackground(love.graphics.getWidth(), love.graphics.getHeight())
 
 function love.load()
   love.filesystem.createDirectory("metadata")
@@ -366,7 +366,6 @@ function love.load()
           if nodeType == "video" then
             node.meta = meta[key] or {}
             if not node.meta.duration then
-              -- inline extractMetadata
               local cmd = string.format(
                 'mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null',
                 SAVE_DIR, MEDIA_ROOT .. "/" .. key
@@ -392,7 +391,6 @@ function love.load()
   love.graphics.setBackgroundColor(UI.bgColor)
   love.mouse.setVisible(false)
   love.math.setRandomSeed(os.time())
-  background = createLiveBackground(love.graphics.getWidth(), love.graphics.getHeight())
   resetScroll()
 end
 
