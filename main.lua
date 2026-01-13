@@ -480,3 +480,18 @@ function love.mousepressed(x, y, button, istouch, presses)
     navigateOut()
   end
 end
+
+local SCROLL_THRESHOLD = 30
+local scrollBuffer = 0
+function love.wheelmoved(x, y)
+  if (y > 0) ~= (scrollBuffer > 0) then scrollBuffer = 0 end
+  scrollBuffer = scrollBuffer + y
+  while scrollBuffer > SCROLL_THRESHOLD do
+    state.selectedIndex = math.max(1, state.selectedIndex - 1)
+    scrollBuffer = scrollBuffer - SCROLL_THRESHOLD
+  end
+  while scrollBuffer < -SCROLL_THRESHOLD do
+    state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
+    scrollBuffer = scrollBuffer + SCROLL_THRESHOLD
+  end
+end
