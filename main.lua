@@ -15,10 +15,6 @@ local function stripExtension(filename)
   return filename:match("(.+)%.[^.]+$") or filename
 end
 
-local function loadMetadata(videoPath)
-  return conf.parse(love.filesystem.read("metadata/" .. table.concat(videoPath, "/") .. ".conf") or "")
-end
-
 local function saveMetadata(videoPath, data)
   love.filesystem.write("metadata/" .. table.concat(videoPath, "/") .. ".conf", conf.serialize(data))
 end
@@ -37,7 +33,9 @@ local function loadTree(path, fsPath)
         tree[name] = loadTree(newPath, fullPath)
         tree[name].isDir = true
       elseif name:match("%.mp4$") or name:match("%.mkv$") or name:match("%.avi$") or name:match("%.mp3$") then
-        tree[name] = {type = "video", path = newPath, meta = loadMetadata(newPath)}
+        local metaContent = love.filesystem.read("metadata/" .. table.concat(newPath, "/") .. ".conf")
+        local meta = metaContent and conf.parse(metaContent) or {}
+        tree[name] = {type = "video", path = newPath, meta = meta}
       elseif name:match("%.rvz$") then
         tree[name] = {type = "wii_game"}
       elseif name:match("%.sh$") then
@@ -49,19 +47,13 @@ local function loadTree(path, fsPath)
   return tree
 end
 
-local function getFileMeta(node)
-  if not node.fileMeta then
-    local h = io.popen(string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null',
-      SAVE_DIR, MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
-    node.fileMeta = conf.parse(h:read("*a"))
-    h:close()
-    
-    if not node.meta.duration and node.fileMeta.duration then
-      node.meta.duration = node.fileMeta.duration
-      saveMetadata(node.path, node.meta)
-    end
-  end
-  return node.fileMeta
+local function ensureMetadata(node)
+  if node.meta.duration then return end
+  local h = io.popen(string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null', SAVE_DIR, MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
+  local extracted = conf.parse(h:read("*a"))
+  h:close()
+  for k, v in pairs(extracted) do node.meta[k] = v end
+  saveMetadata(node.path, node.meta)
 end
 
 local function getNode(path)
@@ -109,13 +101,12 @@ local function getMenuItems()
   -- Track submenus
   if menu == ":audio" or menu == ":sub" then
     local items = {}
-    local fm = getFileMeta(video)
     
     if menu == ":sub" then
       table.insert(items, {label = "none", target = "none", action = "select_sub", trackId = ""})
     end
     
-    for key, value in pairs(fm) do
+    for key, value in pairs(video.meta) do
       local trackType, trackId = key:match("^track_([^_]+)_(.*)$")
       if trackType and ":" .. trackType == menu then
         table.insert(items, {label = value, target = value, action = "select_" .. trackType, trackId = trackId})
@@ -132,7 +123,7 @@ local function getMenuItems()
   
   -- Video menu
   if video then
-    local fm, meta = getFileMeta(video), video.meta
+    local meta = video.meta
     local pct = watchPct(video)
     local playLabel = "Play"
     
@@ -140,11 +131,11 @@ local function getMenuItems()
       playLabel = playLabel .. " [" .. pct .. "%" .. (meta.duration and ", ends at " .. os.date("%H:%M", os.time() + tonumber(meta.duration) - (tonumber(meta.position) or 0)) or "") .. "]"
     end
     
-    local audioLabel = meta.aid and fm["track_audio_" .. meta.aid] 
-      and "Audio [" .. fm["track_audio_" .. meta.aid] .. "]" or "Audio"
+    local audioLabel = meta.aid and meta["track_audio_" .. meta.aid] 
+      and "Audio [" .. meta["track_audio_" .. meta.aid] .. "]" or "Audio"
     
     local subLabel = meta.sid == "" and "Subtitles [none]"
-      or (meta.sid and fm["track_sub_" .. meta.sid] and "Subtitles [" .. fm["track_sub_" .. meta.sid] .. "]" or "Subtitles")
+      or (meta.sid and meta["track_sub_" .. meta.sid] and "Subtitles [" .. meta["track_sub_" .. meta.sid] .. "]" or "Subtitles")
     
     return {
       {label = playLabel, target = "play", action = "play", node = video},
@@ -199,6 +190,7 @@ function navigateIn()
   
   if action == "play" then
     local node = item.node
+    ensureMetadata(node)
     local args = {
       "--fullscreen",
       "--msg-level=all=no",
@@ -235,6 +227,7 @@ function navigateIn()
     io.popen(string.format(cmd, filePath))
     
   elseif action == "audio_menu" or action == "sub_menu" then
+    ensureMetadata(item.node)
     table.insert(state.path, item.target)
     state.selectedIndex = 1
     resetScroll()
