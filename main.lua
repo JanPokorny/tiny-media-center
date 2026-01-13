@@ -21,6 +21,7 @@ local conf = require("conf_parser")
 
 local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
 local SAVE_DIR = love.filesystem.getSaveDirectory()
+local METADATA_FILE = "metadata/media.conf"
 
 local state = {path = {}, selectedIndex = 1, scrollOffset = 0}
 ---@type DirectoryNode
@@ -35,70 +36,10 @@ local function stripExtension(filename)
   return filename:match("(.+)%.[^.]+$") or filename
 end
 
-local function saveMetadata(videoPath, data)
-  love.filesystem.write("metadata/" .. table.concat(videoPath, "/") .. ".conf", conf.serialize(data))
-end
-
----@param path string[]
----@param fsPath string
----@return table<string, Node>
-local function loadTree(path, fsPath)
-  ---@type table<string, Node>
-  local children = {}
-  local h = io.popen('ls -1 "' .. fsPath .. '" 2>/dev/null')
-  for name in h:lines() do
-    if name:sub(1, 1) ~= "." then
-      local fullPath = fsPath .. "/" .. name
-      local newPath = {unpack(path)}
-      table.insert(newPath, name)
-      local isDir = io.popen('test -d "' .. fullPath .. '" && echo yes'):read("*a") ~= ""
-      
-      if isDir then
-        children[name] = {
-          name = name,
-          path = newPath,
-          type = "directory",
-          children = loadTree(newPath, fullPath)
-        }
-      elseif name:match("%.mp4$") or name:match("%.mkv$") or name:match("%.avi$") or name:match("%.mp3$") then
-        local metaContent = love.filesystem.read("metadata/" .. table.concat(newPath, "/") .. ".conf")
-        local meta = metaContent and conf.parse(metaContent) or {}
-        ---@type VideoNode
-        children[name] = {
-          name = name,
-          path = newPath,
-          type = "video",
-          meta = meta
-        }
-      elseif name:match("%.rvz$") then
-        ---@type WiiGameNode
-        children[name] = {
-          name = name,
-          path = newPath,
-          type = "wii_game"
-        }
-      elseif name:match("%.sh$") then
-        ---@type ScriptNode
-        children[name] = {
-          name = name,
-          path = newPath,
-          type = "script"
-        }
-      end
-    end
-  end
-  h:close()
-  return children
-end
-
----@param node VideoNode
-local function ensureMetadata(node)
-  if node.meta.duration then return end
-  local h = io.popen(string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null', SAVE_DIR, MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
-  local extracted = conf.parse(h:read("*a"))
-  h:close()
-  for k, v in pairs(extracted) do node.meta[k] = v end
-  saveMetadata(node.path, node.meta)
+---@param videoPath string[]
+---@param data table<string, any>
+local function appendMetadata(videoPath, data)
+  love.filesystem.append(METADATA_FILE, "\n" .. conf.serialize({ [table.concat(videoPath, "/")] = data }))
 end
 
 ---@param path string[]
@@ -238,13 +179,12 @@ function navigateIn()
   local items = getMenuItems()
   local item = items[state.selectedIndex]
   if not item then return end
-  
+
   local action = item.action or "browse"
-  
+
   if action == "play" then
     if item.node.type ~= "video" then return end
     local node = item.node --[[@as VideoNode]]
-    ensureMetadata(node)
     local args = {
       "--fullscreen",
       "--msg-level=all=no",
@@ -259,42 +199,44 @@ function navigateIn()
       string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR),
       string.format('--script="%s/mpv/visualiser.lua"', SAVE_DIR),
     }
-    
+
     if node.meta.position and tonumber(node.meta.position) < tonumber(node.meta.duration) - 3 then
       table.insert(args, "--start=" .. node.meta.position)
     end
     if node.meta.aid then table.insert(args, "--aid=" .. node.meta.aid) end
     if node.meta.sid and #node.meta.sid > 0 then table.insert(args, "--sid=" .. node.meta.sid) end
-    
+
     local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "), 
       MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
     local output = h:read("*a")
     h:close()
-    
-    for k, v in pairs(conf.parse(output)) do node.meta[k] = v end
-    saveMetadata(node.path, node.meta)
-    
+
+    local updatedData = conf.parse(output)
+    for k, v in pairs(updatedData) do node.meta[k] = v end
+    appendMetadata(node.path, updatedData)
+
   elseif action == "play_wii_game" or action == "run_script" then
     local cmd = action == "play_wii_game" and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
     local filePath = MEDIA_ROOT .. "/" .. table.concat(state.path, "/") .. "/" .. item.target
     io.popen(string.format(cmd, filePath))
-    
+
   elseif action == "audio_menu" or action == "sub_menu" then
     if item.node.type ~= "video" then return end
-    ensureMetadata(item.node --[[@as VideoNode]])
     table.insert(state.path, item.target)
     state.selectedIndex = 1
     resetScroll()
-    
+
   elseif action == "select_audio" or action == "select_sub" then
     local video, menu = getVideoContext()
     if not video or video.type ~= "video" then return end
-    video --[[@as VideoNode]].meta[action == "select_audio" and "aid" or "sid"] = item.trackId
-    saveMetadata(video.path, video.meta)
+    local videoNode = video --[[@as VideoNode]]
+    local key = action == "select_audio" and "aid" or "sid"
+    local value = item.trackId
+    videoNode.meta[key] = value
+    appendMetadata(videoNode.path, { [key] = value })
     table.remove(state.path)
     state.selectedIndex = action == "select_audio" and 2 or 3
     resetScroll()
-    
   else -- browse
     table.insert(state.path, item.target)
     state.selectedIndex = 1
@@ -303,10 +245,9 @@ function navigateIn()
 end
 
 function navigateOut()
-  if #state.path < 0 then return end
+  if #state.path < 1 then return end
   local last = state.path[#state.path]
   table.remove(state.path)
-  
   state.selectedIndex = 1
   for i, item in ipairs(getMenuItems()) do
     if item.target == last then
@@ -382,15 +323,77 @@ local background = nil
 function love.load()
   love.filesystem.createDirectory("metadata")
   love.filesystem.createDirectory("mpv")
-  for _, file in ipairs({"preflight.lua", "runtime.lua", "visualiser.lua", "input.conf", "subfont.ttf"}) do
-    love.filesystem.write("mpv/" .. file, love.filesystem.read("attachments/mpv/" .. file))
+  for _, f in ipairs({"preflight.lua","runtime.lua","visualiser.lua","input.conf","subfont.ttf"}) do
+    love.filesystem.write("mpv/"..f, love.filesystem.read("attachments/mpv/"..f))
   end
+
+  local meta = conf.parse(love.filesystem.read(METADATA_FILE)) or {}
+  local children, typeByExt = {}, {
+    mp4="video", mkv="video", avi="video", mp3="video",
+    rvz="wii_game", sh="script",
+  }
+
+  local h = io.popen('cd "'..MEDIA_ROOT..'" && find . -type f 2>/dev/null')
+  for line in h:lines() do
+    local rel = line:match("^%./(.+)")
+    if rel then
+      local parts = {}
+      for p in rel:gmatch("[^/]+") do
+        if p:sub(1,1) == "." then parts = nil; break end
+        parts[#parts+1] = p
+      end
+      if parts then
+        local nodeType = typeByExt[parts[#parts]:match("%.([^%.]+)$")]
+        if nodeType then
+          local cur, curPath = children, {}
+          for i = 1, #parts-1 do
+            local name = parts[i]
+            curPath[#curPath+1] = name
+            cur[name] = cur[name] or {
+              name = name,
+              path = { unpack(curPath) },
+              type = "directory",
+              children = {},
+            }
+            cur = cur[name].children
+          end
+
+          local name = parts[#parts]
+          curPath[#curPath+1] = name
+          local key = table.concat(curPath, "/")
+
+          local node = { name = name, path = curPath, type = nodeType }
+          if nodeType == "video" then
+            node.meta = meta[key] or {}
+            if not node.meta.duration then
+              -- inline extractMetadata
+              local cmd = string.format(
+                'mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null',
+                SAVE_DIR, MEDIA_ROOT .. "/" .. key
+              )
+              local ph = io.popen(cmd)
+              local extracted = conf.parse(ph:read("*a"))
+              ph:close()
+              for k, v in pairs(extracted) do node.meta[k] = v end
+            end
+            meta[key] = node.meta
+          end
+          cur[name] = node
+        end
+      end
+    end
+  end
+  h:close()
+
+  mediaTree.children = children
+  love.filesystem.write(METADATA_FILE, conf.serialize(meta))
+
   love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", UI.fontSize))
   love.graphics.setBackgroundColor(UI.bgColor)
   love.mouse.setVisible(false)
-  mediaTree.children = loadTree({}, MEDIA_ROOT)
   love.math.setRandomSeed(os.time())
   background = createLiveBackground(love.graphics.getWidth(), love.graphics.getHeight())
+  resetScroll()
 end
 
 function love.update(dt)
@@ -436,7 +439,8 @@ function love.draw()
   listFadeShader:send("fade_top_size", fadeTopSize)
   listFadeShader:send("fade_bot_size", fadeBotSize)
   love.graphics.setShader(listFadeShader)
-  for i, item in ipairs(getMenuItems()) do
+  local menuItems = getMenuItems()
+  for i, item in ipairs(menuItems) do
     local y = h / 2 - state.scrollOffset + (i - 1) * UI.itemHeight
     if y > -UI.itemHeight and y < h then
         love.graphics.setColor(i == state.selectedIndex and UI.accentColor or UI.textColor)
@@ -470,6 +474,8 @@ function love.keypressed(key)
         break
       end
     end
+  else
+    print("Unbound key: " .. key)
   end
 end
 
