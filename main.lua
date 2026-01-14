@@ -391,3 +391,15 @@ function love.wheelmoved(x, y)
     scrollBuffer = scrollBuffer + 30
   end
 end
+
+function love.gamepadpressed(joystick, button)
+  if button == "dpup" then
+    state.selectedIndex = math.max(1, state.selectedIndex - 1)
+  elseif button == "dpdown" then
+    state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
+  elseif button == "a" then
+    navigateIn()
+  elseif button == "b" then
+    navigateOut()
+  end
+end
