@@ -3,6 +3,7 @@
 local M = {}
 
 function M.parse(text)
+  if text == nil then return {} end
   local result = {}
   local currentSection = result
   
