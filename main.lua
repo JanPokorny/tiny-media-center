@@ -216,9 +216,8 @@ function createLiveBackground(width, height)
   
   function bg:update(dt)
     for _, star in ipairs(self.stars) do
-      star.x, star.y = star.x + star.vx * dt, star.y + star.vy * dt
-      if star.x < -50 then star.x = self.width + 50 elseif star.x > self.width + 50 then star.x = -50 end
-      if star.y < -50 then star.y = self.height + 50 elseif star.y > self.height + 50 then star.y = -50 end
+      star.x = (50 + star.x + star.vx * dt) % (bg.width + 100) - 50
+      star.y = (50 + star.y + star.vy * dt) % (bg.height + 100) - 50
     end
   end
   
