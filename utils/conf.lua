@@ -1,18 +1,15 @@
--- Simple parser for key=value config format with [section] headers
+local Conf = {}
 
-local M = {}
-
-function M.parse(text)
-  if text == nil then return {} end
+function Conf.parse(text)
+  if not text then return {} end
   local result = {}
   local currentSection = result
-  
   for line in text:gmatch("[^\r\n]+") do
     line = line:match("^%s*(.-)%s*$")
     if line ~= "" and line:sub(1, 1) ~= "#" then
       local section = line:match("^%[(.+)%]$")
       if section then
-        result[section] = {}
+        result[section] = result[section] or {}
         currentSection = result[section]
       else
         local key, value = line:match("^([^=]+)=(.*)$")
@@ -22,13 +19,11 @@ function M.parse(text)
       end
     end
   end
-  
   return result
 end
 
-function M.serialize(data)
+function Conf.stringify(data)
   local lines = {}
-  
   for key, value in pairs(data) do
     if type(value) == "table" then
       table.insert(lines, "[" .. key .. "]")
@@ -39,8 +34,7 @@ function M.serialize(data)
       table.insert(lines, key .. "=" .. tostring(value))
     end
   end
-  
   return table.concat(lines, "\n") .. "\n"
 end
 
-return M
+return Conf
