@@ -18,7 +18,7 @@
 ---@field type "script"
 
 local Conf = require("utils.conf")
-local Background = require("components.background")
+local BackgroundComponent = require("components.background")
 
 local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
 local SAVE_DIR = love.filesystem.getSaveDirectory()
@@ -207,7 +207,7 @@ function navigateOut()
   resetScroll()
 end
 
-local background = Background:new {
+local backgroundComponent = BackgroundComponent:new {
   width = love.graphics.getWidth(),
   height = love.graphics.getHeight(),
   numStars = 150,
@@ -284,7 +284,7 @@ end
 
 function love.update(dt)
   state.scrollOffset = state.scrollOffset + (targetOffset() - state.scrollOffset) * 10 * dt
-  background:update(dt)
+  backgroundComponent:update(dt)
 end
 
 local listFadeShader = love.graphics.newShader [[
@@ -301,7 +301,7 @@ local listFadeShader = love.graphics.newShader [[
 ]]
 
 function love.draw()
-  background:draw()
+  backgroundComponent:draw()
   local w, h = love.graphics.getDimensions()
   local headerHeight = UI.itemHeight * 1.2
   local fadeTopSize, fadeBotSize = h * 0.3 - headerHeight, h - h * 0.7

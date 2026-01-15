@@ -5,19 +5,19 @@
 ---@field vy number
 ---@field size number
 
----@class Background
+---@class BackgroundComponent
 ---@field width integer
 ---@field height integer
 ---@field speed integer
 ---@field numStars integer
 ---@field connectionDist integer
 ---@field private _stars Star[]?
-local Background = {}
+local BackgroundComponent = {}
 
----Creates a new Background instance
----@param o Background?
----@return Background
-function Background:new(o)
+---Creates a new BackgroundComponent instance
+---@param o BackgroundComponent?
+---@return BackgroundComponent
+function BackgroundComponent:new(o)
   o = o or {}
   setmetatable(o, self)
   self.__index = self
@@ -36,7 +36,7 @@ end
 
 ---Updates star positions based on delta time
 ---@param dt number
-function Background:update(dt)
+function BackgroundComponent:update(dt)
   for _, star in ipairs(self._stars) do
     star.x = (50 + star.x + star.vx * dt) % (self.width + 100) - 50
     star.y = (50 + star.y + star.vy * dt) % (self.height + 100) - 50
@@ -44,7 +44,7 @@ function Background:update(dt)
 end
 
 ---Draws the starfield with connections
-function Background:draw()
+function BackgroundComponent:draw()
   love.graphics.setBlendMode("add")
   for i, s1 in ipairs(self._stars) do
     love.graphics.setColor(0.5, 0.6, 0.7, 0.4)
@@ -63,4 +63,4 @@ function Background:draw()
   love.graphics.setBlendMode("alpha")
 end
 
-return Background
+return BackgroundComponent
