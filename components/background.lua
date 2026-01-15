@@ -1,13 +1,12 @@
----@class Star
+---@class (exact) Star
 ---@field x number
 ---@field y number
 ---@field vx number
 ---@field vy number
 ---@field size number
 
----@class BackgroundComponent
----@field width integer
----@field height integer
+---@class (exact) BackgroundComponent
+---@field private __index self?
 ---@field speed integer
 ---@field numStars integer
 ---@field connectionDist integer
@@ -22,10 +21,11 @@ function BackgroundComponent:new(o)
   setmetatable(o, self)
   self.__index = self
   o._stars = {}
+  local w, h = love.graphics.getDimensions()
   for _ = 1, o.numStars do
     table.insert(o._stars, {
-      x = love.math.random(0, o.width),
-      y = love.math.random(0, o.height),
+      x = love.math.random(0, w),
+      y = love.math.random(0, h),
       vx = love.math.random(-100, 100) / 100 * o.speed,
       vy = love.math.random(-100, 100) / 100 * o.speed,
       size = love.math.random(1, 3)
@@ -37,9 +37,10 @@ end
 ---Updates star positions based on delta time
 ---@param dt number
 function BackgroundComponent:update(dt)
+  local w, h = love.graphics.getDimensions()
   for _, star in ipairs(self._stars) do
-    star.x = (50 + star.x + star.vx * dt) % (self.width + 100) - 50
-    star.y = (50 + star.y + star.vy * dt) % (self.height + 100) - 50
+    star.x = (50 + star.x + star.vx * dt) % (w + 100) - 50
+    star.y = (50 + star.y + star.vy * dt) % (h + 100) - 50
   end
 end
 

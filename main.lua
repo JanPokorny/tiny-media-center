@@ -208,8 +208,6 @@ function navigateOut()
 end
 
 local backgroundComponent = BackgroundComponent:new {
-  width = love.graphics.getWidth(),
-  height = love.graphics.getHeight(),
   numStars = 150,
   speed = 15,
   connectionDist = 120,
