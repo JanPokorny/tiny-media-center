@@ -207,11 +207,7 @@ function navigateOut()
   resetScroll()
 end
 
-local backgroundComponent = BackgroundComponent:new {
-  numStars = 150,
-  speed = 15,
-  connectionDist = 120,
-}
+local backgroundComponent = BackgroundComponent:new()
 
 function love.load()
   love.filesystem.createDirectory("metadata")
