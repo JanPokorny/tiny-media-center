@@ -351,7 +351,7 @@ mp.observe_property("current-tracks/audio", "native", visualizer_hook)
 mp.observe_property("current-tracks/video", "native", visualizer_hook)
 
 local function cycle_visualizer()
-    local i, index = 1
+    local i, index = 1, nil
     for i = 1, #visualizer_name_list do
         if (visualizer_name_list[i] == opts.name) then
             index = i + 1

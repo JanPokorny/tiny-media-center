@@ -18,24 +18,19 @@
 ---@field type "script"
 
 local Conf = require("utils.conf")
+local Style = require("style")
 local BackgroundComponent = require("components.background")
 local MenuItemComponent = require("components.menu_item")
+local MenuComponent = require("components.menu")
 
 local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
 local SAVE_DIR = love.filesystem.getSaveDirectory()
 local METADATA_FILE = "metadata/media.conf"
 
-local state = { path = {}, selectedIndex = 1, scrollOffset = 0 }
+local state = { path = {} }
 ---@type DirectoryNode
 local mediaTree = { name = "", path = {}, type = "directory", children = {} }
-local UI = {
-  bgColor = { 0, 0, 0 },
-  textColor = { 1, 1, 1 },
-  accentColor = { 1, 0.8, 0 },
-  dimColor = { 0.5, 0.5, 0.5 },
-  fontSize = 72,
-  itemHeight = 81
-}
+local currentMenu
 
 local function stripExtension(filename)
   return filename:match("(.+)%.[^.]+$") or filename
@@ -60,12 +55,13 @@ local function getNode(path)
   return node
 end
 
+---@param path string[]
 ---@return Node, string
-local function getVideoContext()
-  for i, seg in ipairs(state.path) do
-    if seg:sub(1, 1) == ":" then return getNode({ unpack(state.path, 1, i - 1) }), seg end
-    local node = getNode({ unpack(state.path, 1, i) })
-    if node and node.type == "video" then return node, state.path[i + 1] end
+local function getVideoContext(path)
+  for i, seg in ipairs(path) do
+    if seg:sub(1, 1) == ":" then return getNode({ unpack(path, 1, i - 1) }), seg end
+    local node = getNode({ unpack(path, 1, i) })
+    if node and node.type == "video" then return node, path[i + 1] end
   end
 end
 
@@ -77,104 +73,129 @@ local function watchPct(node)
   return pct >= 90 and 100 or pct
 end
 
-local function getMenuItems()
-  local video, menu = getVideoContext()
+local getAudioSubMenuItems
+local getVideoMenuItems
+local getDirectoryMenuItems
 
-  if video and (menu == ":audio" or menu == ":sub") then
-    local raw_items = menu == ":sub" and { { label = "none", target = "none", action = "select_sub", trackId = "" } } or {}
-    local videoNode = video --[[@as VideoNode]]
-    for key, value in pairs(videoNode.meta) do
-      local trackType, trackId = key:match("^track_([^_]+)_(.*)$")
-      if trackType and ":" .. trackType == menu then
-        table.insert(raw_items, { label = value, target = value, action = "select_" .. trackType, trackId = trackId })
+getAudioSubMenuItems = function(video, menu)
+  local raw_items = menu == ":sub" and { { label = "none", target = "none", action = "select_sub", trackId = "" } } or {}
+  local videoNode = video --[[@as VideoNode]]
+  for key, value in pairs(videoNode.meta) do
+    local trackType, trackId = key:match("^track_([^_]+)_(.*)$")
+    if trackType and ":" .. trackType == menu then
+      table.insert(raw_items, { label = value, target = value, action = "select_" .. trackType, trackId = trackId })
+    end
+  end
+  table.sort(raw_items, function(a, b)
+    return a.trackId == "" or (b.trackId ~= "" and tonumber(a.trackId) < tonumber(b.trackId))
+  end)
+
+  local items = {}
+  for _, raw_item in ipairs(raw_items) do
+    table.insert(items, MenuItemComponent:new({
+      label = raw_item.label,
+      target = raw_item.target,
+      select = function()
+        local parentMenu = currentMenu
+        local oldPath = state.path
+
+        local videoFromCtx = getVideoContext(oldPath) --[[@as VideoNode]]
+        local key = raw_item.action == "select_audio" and "aid" or "sid"
+        videoFromCtx.meta[key] = raw_item.trackId
+        appendMetadata(videoFromCtx.path, { [key] = raw_item.trackId })
+
+        if parentMenu.navigateOut then
+          parentMenu.navigateOut()
+        end
+
+        local newIndex = raw_item.action == "select_audio" and 2 or 3
+        currentMenu:setItems(getVideoMenuItems(video), newIndex)
       end
-    end
-    table.sort(raw_items, function(a, b)
-      return a.trackId == "" or (b.trackId ~= "" and tonumber(a.trackId) < tonumber(b.trackId))
-    end)
-
-    local items = {}
-    for _, raw_item in ipairs(raw_items) do
-      table.insert(items, MenuItemComponent:new({
-        label = raw_item.label,
-        target = raw_item.target,
-        select = function()
-          local video = getVideoContext() --[[@as VideoNode]]
-          local key = raw_item.action == "select_audio" and "aid" or "sid"
-          video.meta[key] = raw_item.trackId
-          appendMetadata(video.path, { [key] = raw_item.trackId })
-          table.remove(state.path)
-          state.selectedIndex = raw_item.action == "select_audio" and 2 or 3
-          resetScroll()
-        end
-      }))
-    end
-    return items
+    }))
   end
+  return items
+end
 
-  if video and video.type == "video" then
-    local videoNode = video --[[@as VideoNode]]
-    local meta, pct = videoNode.meta, watchPct(videoNode)
-    local playLabel = "Play" .. (pct > 0 and " [" .. pct .. "%" ..
-        (meta.duration and ", ends at " .. os.date("%H:%M", os.time() + tonumber(meta.duration) - tonumber(meta.position or 0)) or "") ..
-        "]" or "")
-    local audioLabel = meta.aid and meta["track_audio_" .. meta.aid] and "Audio [" .. meta["track_audio_" .. meta.aid] .. "]" or
-        "Audio"
-    local subLabel = meta.sid == "" and "Subtitles [none]" or
-        (meta.sid and meta["track_sub_" .. meta.sid] and "Subtitles [" .. meta["track_sub_" .. meta.sid] .. "]" or "Subtitles")
+getVideoMenuItems = function(video)
+  local videoNode = video --[[@as VideoNode]]
+  local meta, pct = videoNode.meta, watchPct(videoNode)
+  local playLabel = "Play" .. (pct > 0 and " [" .. pct .. "%" ..
+      (meta.duration and ", ends at " .. os.date("%H:%M", os.time() + tonumber(meta.duration) - tonumber(meta.position or 0)) or "") ..
+      "]" or "")
+  local audioLabel = meta.aid and meta["track_audio_" .. meta.aid] and "Audio [" .. meta["track_audio_" .. meta.aid] .. "]" or
+      "Audio"
+  local subLabel = meta.sid == "" and "Subtitles [none]" or
+      (meta.sid and meta["track_sub_" .. meta.sid] and "Subtitles [" .. meta["track_sub_" .. meta.sid] .. "]" or "Subtitles")
 
-    return {
-      MenuItemComponent:new({
-        label = playLabel,
-        target = "play",
-        node = video,
-        select = function()
-          local node = video --[[@as VideoNode]]
-          local args = { '--fullscreen', '--msg-level=all=no', '--save-position-on-quit=no',
-            '--input-default-bindings=no', '--osd-on-seek=msg-bar', '--sub-font-provider=none',
-            '--sub-font-size=60', '--osd-font-provider=none', '--osd-font-size=60',
-            string.format('--config-dir="%s/mpv"', SAVE_DIR),
-            string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR),
-            string.format('--script="%s/mpv/visualiser.lua"', SAVE_DIR) }
+  return {
+    MenuItemComponent:new({
+      label = playLabel,
+      target = "play",
+      node = video,
+      select = function()
+        local node = video --[[@as VideoNode]]
+        local args = { '--fullscreen', '--msg-level=all=no', '--save-position-on-quit=no',
+          '--input-default-bindings=no', '--osd-on-seek=msg-bar', '--sub-font-provider=none',
+          '--sub-font-size=60', '--osd-font-provider=none', '--osd-font-size=60',
+          string.format('--config-dir="%s/mpv"', SAVE_DIR),
+          string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR),
+          string.format('--script="%s/mpv/visualiser.lua"', SAVE_DIR) }
 
-          if node.meta.position and tonumber(node.meta.position) < tonumber(node.meta.duration) - 3 then
-            table.insert(args, "--start=" .. node.meta.position)
-          end
-          if node.meta.aid then table.insert(args, "--aid=" .. node.meta.aid) end
-          if node.meta.sid and #node.meta.sid > 0 then table.insert(args, "--sid=" .. node.meta.sid) end
-
-          local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "),
-            MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
-          local updatedData = Conf.parse(h:read("*a"))
-          h:close()
-          for k, v in pairs(updatedData) do node.meta[k] = v end
-          appendMetadata(node.path, updatedData)
+        if node.meta.position and tonumber(node.meta.position) < tonumber(node.meta.duration) - 3 then
+          table.insert(args, "--start=" .. node.meta.position)
         end
-      }),
-      MenuItemComponent:new({
-        label = audioLabel,
-        target = ":audio",
-        node = video,
-        select = function()
-          table.insert(state.path, ":audio")
-          state.selectedIndex = 1
-          resetScroll()
-        end
-      }),
-      MenuItemComponent:new({
-        label = subLabel,
-        target = ":sub",
-        node = video,
-        select = function()
-          table.insert(state.path, ":sub")
-          state.selectedIndex = 1
-          resetScroll()
-        end
-      })
-    }
-  end
+        if node.meta.aid then table.insert(args, "--aid=" .. node.meta.aid) end
+        if node.meta.sid and #node.meta.sid > 0 then table.insert(args, "--sid=" .. node.meta.sid) end
 
-  local dir = getNode(state.path)
+        local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "),
+          MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
+        local updatedData = Conf.parse(h:read("*a"))
+        h:close()
+        for k, v in pairs(updatedData) do node.meta[k] = v end
+        appendMetadata(node.path, updatedData)
+      end
+    }),
+    MenuItemComponent:new({
+      label = audioLabel,
+      target = ":audio",
+      node = video,
+      select = function()
+        local parentMenu = currentMenu
+        local oldPath = state.path
+        state.path = { unpack(oldPath) }
+        table.insert(state.path, ":audio")
+        currentMenu = MenuComponent:new({ items = getAudioSubMenuItems(video, ":audio") })
+        currentMenu:resetScroll()
+        currentMenu.navigateOut = function()
+          currentMenu = parentMenu
+          state.path = oldPath
+          currentMenu:resetScroll()
+        end
+      end
+    }),
+    MenuItemComponent:new({
+      label = subLabel,
+      target = ":sub",
+      node = video,
+      select = function()
+        local parentMenu = currentMenu
+        local oldPath = state.path
+        state.path = { unpack(oldPath) }
+        table.insert(state.path, ":sub")
+        currentMenu = MenuComponent:new({ items = getAudioSubMenuItems(video, ":sub") })
+        currentMenu:resetScroll()
+        currentMenu.navigateOut = function()
+          currentMenu = parentMenu
+          state.path = oldPath
+          currentMenu:resetScroll()
+        end
+      end
+    })
+  }
+end
+
+getDirectoryMenuItems = function(path)
+  local dir = getNode(path)
   if not dir or dir.type ~= "directory" then return {} end
 
   local raw_items = {}
@@ -202,51 +223,36 @@ local function getMenuItems()
   local items = {}
   for _, raw_item in ipairs(raw_items) do
     local action = raw_item.action or "browse"
-    local selectFn
     if action == "play_wii_game" or action == "run_script" then
-      selectFn = function()
+      raw_item.select = function()
         local cmd = action == "play_wii_game" and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
-        io.popen(string.format(cmd, MEDIA_ROOT .. "/" .. table.concat(state.path, "/") .. "/" .. raw_item.target))
+        io.popen(string.format(cmd, MEDIA_ROOT .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target))
       end
     else -- browse
-      selectFn = function()
+      raw_item.select = function()
+        local parentMenu = currentMenu
+        local oldPath = state.path
+        state.path = { unpack(oldPath) }
         table.insert(state.path, raw_item.target)
-        state.selectedIndex = 1
-        resetScroll()
+
+        local newItems
+        if raw_item.node.type == "video" then
+          newItems = getVideoMenuItems(raw_item.node)
+        else -- directory
+          newItems = getDirectoryMenuItems(state.path)
+        end
+        currentMenu = MenuComponent:new({ items = newItems, selectedIndex = 1 })
+        currentMenu:resetScroll()
+        currentMenu.navigateOut = function()
+          currentMenu = parentMenu
+          state.path = oldPath
+          currentMenu:resetScroll()
+        end
       end
     end
-    raw_item.select = selectFn
     table.insert(items, MenuItemComponent:new(raw_item))
   end
   return items
-end
-
-local function targetOffset()
-  local w, h = love.graphics.getDimensions()
-  local itemCount, listHeight = #getMenuItems(), #getMenuItems() * UI.itemHeight
-  return listHeight <= h * 0.8 and (listHeight - UI.itemHeight) / 2 or (state.selectedIndex - 1) * UI.itemHeight
-end
-
-function resetScroll()
-  state.scrollOffset = targetOffset() - UI.itemHeight * 0.5
-end
-
-function navigateIn()
-  local item = getMenuItems()[state.selectedIndex]
-  if not item then return end
-  item:select()
-end
-
-function navigateOut()
-  if #state.path < 1 then return end
-  local last = table.remove(state.path)
-  state.selectedIndex = 1
-  for i, item in ipairs(getMenuItems()) do
-    if item.target == last then
-      state.selectedIndex = i; break
-    end
-  end
-  resetScroll()
 end
 
 local backgroundComponent = BackgroundComponent:new()
@@ -311,82 +317,52 @@ function love.load()
 
   mediaTree.children = children
   love.filesystem.write(METADATA_FILE, Conf.stringify(meta))
-  love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", UI.fontSize))
-  love.graphics.setBackgroundColor(UI.bgColor)
+  love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", Style.FONT_SIZE))
+  love.graphics.setBackgroundColor(Style.BG_COLOR)
   love.mouse.setVisible(false)
   love.math.setRandomSeed(os.time())
-  resetScroll()
+  currentMenu = MenuComponent:new({
+    items = getDirectoryMenuItems(state.path)
+  })
+  currentMenu:resetScroll()
 end
 
 function love.update(dt)
-  state.scrollOffset = state.scrollOffset + (targetOffset() - state.scrollOffset) * 10 * dt
+  currentMenu:update(dt)
   backgroundComponent:update(dt)
 end
-
-local listFadeShader = love.graphics.newShader [[
-  extern number screen_height; extern number header_height; extern number fade_top_size; extern number fade_bot_size;
-  vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
-    vec4 pixel = Texel(texture, texture_coords) * color;
-    number alpha = screen_coords.y < header_height ? 0.0 :
-      (screen_coords.y < header_height + fade_top_size ? (screen_coords.y - header_height) / fade_top_size : 1.0);
-    if (screen_coords.y > screen_height - fade_bot_size)
-      alpha = min(alpha, (screen_height - screen_coords.y) / fade_bot_size);
-    pixel.a *= alpha;
-    return pixel;
-  }
-]]
 
 function love.draw()
   backgroundComponent:draw()
   local w, h = love.graphics.getDimensions()
-  local headerHeight = UI.itemHeight * 1.2
-  local fadeTopSize, fadeBotSize = h * 0.3 - headerHeight, h - h * 0.7
-
-  listFadeShader:send("screen_height", h)
-  listFadeShader:send("header_height", headerHeight)
-  listFadeShader:send("fade_top_size", fadeTopSize)
-  listFadeShader:send("fade_bot_size", fadeBotSize)
-  love.graphics.setShader(listFadeShader)
-
-  for i, item in ipairs(getMenuItems()) do
-    local y = h / 2 - state.scrollOffset + (i - 1) * UI.itemHeight
-    if y > -UI.itemHeight and y < h then
-      item.focused = i == state.selectedIndex
-      love.graphics.setColor(item.focused and UI.accentColor or UI.textColor)
-      item:draw(UI.fontSize, 50, y, w, UI.itemHeight)
-    end
-  end
-  love.graphics.setShader()
+  currentMenu:draw(0, 0, w, h)
 
   local title = state.path[#state.path] or "tiny media center"
   if title:sub(1, 1) == ":" then title = title:sub(2) end
-  love.graphics.setColor(UI.dimColor)
+  love.graphics.setColor(Style.DIM_COLOR)
   love.graphics.print(stripExtension(title), 0, 0)
 end
 
 function love.keypressed(key)
   if key == "up" then
-    state.selectedIndex = math.max(1, state.selectedIndex - 1)
+    currentMenu:navigateUp()
   elseif key == "down" then
-    state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
+    currentMenu:navigateDown()
   elseif key == "return" then
-    navigateIn()
+    currentMenu:navigateIn()
   elseif key == "escape" or key == "appback" or key == "sleep" then
-    navigateOut()
+    if currentMenu.navigateOut then currentMenu.navigateOut() end
   elseif #key == 1 then
-    local items = getMenuItems()
-    for i = 0, #items - 1 do
-      local index = 1 + (state.selectedIndex + i) % #items
-      if items[index].label:lower():sub(1, 1) == key then
-        state.selectedIndex = index
-        break
-      end
-    end
+    currentMenu:jumpToLetter(key)
   end
 end
 
 function love.mousepressed(x, y, button)
-  if button == 1 then navigateIn() elseif button == 2 then navigateOut() end
+  if button == 1 then
+    currentMenu:navigateIn()
+  elseif button == 2 then
+    if currentMenu.navigateOut then currentMenu.navigateOut() end
+  end
 end
 
 local scrollBuffer = 0
@@ -394,23 +370,23 @@ function love.wheelmoved(x, y)
   if (y > 0) ~= (scrollBuffer > 0) then scrollBuffer = 0 end
   scrollBuffer = scrollBuffer + y
   while scrollBuffer > 30 do
-    state.selectedIndex = math.max(1, state.selectedIndex - 1)
+    currentMenu:navigateUp()
     scrollBuffer = scrollBuffer - 30
   end
   while scrollBuffer < -30 do
-    state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
+    currentMenu:navigateDown()
     scrollBuffer = scrollBuffer + 30
   end
 end
 
 function love.gamepadpressed(joystick, button)
   if button == "dpup" then
-    state.selectedIndex = math.max(1, state.selectedIndex - 1)
+    currentMenu:navigateUp()
   elseif button == "dpdown" then
-    state.selectedIndex = math.min(#getMenuItems(), state.selectedIndex + 1)
+    currentMenu:navigateDown()
   elseif button == "a" then
-    navigateIn()
+    currentMenu:navigateIn()
   elseif button == "b" then
-    navigateOut()
+    if currentMenu.navigateOut then currentMenu.navigateOut() end
   end
 end
