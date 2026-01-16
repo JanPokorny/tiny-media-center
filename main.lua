@@ -19,6 +19,7 @@
 
 local Conf = require("utils.conf")
 local BackgroundComponent = require("components.background")
+local MenuItemComponent = require("components.menu_item")
 
 local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
 local SAVE_DIR = love.filesystem.getSaveDirectory()
@@ -80,17 +81,34 @@ local function getMenuItems()
   local video, menu = getVideoContext()
 
   if video and (menu == ":audio" or menu == ":sub") then
-    local items = menu == ":sub" and { { label = "none", target = "none", action = "select_sub", trackId = "" } } or {}
+    local raw_items = menu == ":sub" and { { label = "none", target = "none", action = "select_sub", trackId = "" } } or {}
     local videoNode = video --[[@as VideoNode]]
     for key, value in pairs(videoNode.meta) do
       local trackType, trackId = key:match("^track_([^_]+)_(.*)$")
       if trackType and ":" .. trackType == menu then
-        table.insert(items, { label = value, target = value, action = "select_" .. trackType, trackId = trackId })
+        table.insert(raw_items, { label = value, target = value, action = "select_" .. trackType, trackId = trackId })
       end
     end
-    table.sort(items, function(a, b)
+    table.sort(raw_items, function(a, b)
       return a.trackId == "" or (b.trackId ~= "" and tonumber(a.trackId) < tonumber(b.trackId))
     end)
+
+    local items = {}
+    for _, raw_item in ipairs(raw_items) do
+      table.insert(items, MenuItemComponent:new({
+        label = raw_item.label,
+        target = raw_item.target,
+        select = function()
+          local video = getVideoContext() --[[@as VideoNode]]
+          local key = raw_item.action == "select_audio" and "aid" or "sid"
+          video.meta[key] = raw_item.trackId
+          appendMetadata(video.path, { [key] = raw_item.trackId })
+          table.remove(state.path)
+          state.selectedIndex = raw_item.action == "select_audio" and 2 or 3
+          resetScroll()
+        end
+      }))
+    end
     return items
   end
 
@@ -98,22 +116,68 @@ local function getMenuItems()
     local videoNode = video --[[@as VideoNode]]
     local meta, pct = videoNode.meta, watchPct(videoNode)
     local playLabel = "Play" .. (pct > 0 and " [" .. pct .. "%" ..
-      (meta.duration and ", ends at " .. os.date("%H:%M", os.time() + tonumber(meta.duration) - tonumber(meta.position or 0)) or "") .. "]" or "")
-    local audioLabel = meta.aid and meta["track_audio_" .. meta.aid] and
-        "Audio [" .. meta["track_audio_" .. meta.aid] .. "]" or "Audio"
+        (meta.duration and ", ends at " .. os.date("%H:%M", os.time() + tonumber(meta.duration) - tonumber(meta.position or 0)) or "") ..
+        "]" or "")
+    local audioLabel = meta.aid and meta["track_audio_" .. meta.aid] and "Audio [" .. meta["track_audio_" .. meta.aid] .. "]" or
+        "Audio"
     local subLabel = meta.sid == "" and "Subtitles [none]" or
         (meta.sid and meta["track_sub_" .. meta.sid] and "Subtitles [" .. meta["track_sub_" .. meta.sid] .. "]" or "Subtitles")
+
     return {
-      { label = playLabel,  target = "play",   action = "play",       node = video },
-      { label = audioLabel, target = ":audio", action = "audio_menu", node = video },
-      { label = subLabel,   target = ":sub",   action = "sub_menu",   node = video }
+      MenuItemComponent:new({
+        label = playLabel,
+        target = "play",
+        node = video,
+        select = function()
+          local node = video --[[@as VideoNode]]
+          local args = { '--fullscreen', '--msg-level=all=no', '--save-position-on-quit=no',
+            '--input-default-bindings=no', '--osd-on-seek=msg-bar', '--sub-font-provider=none',
+            '--sub-font-size=60', '--osd-font-provider=none', '--osd-font-size=60',
+            string.format('--config-dir="%s/mpv"', SAVE_DIR),
+            string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR),
+            string.format('--script="%s/mpv/visualiser.lua"', SAVE_DIR) }
+
+          if node.meta.position and tonumber(node.meta.position) < tonumber(node.meta.duration) - 3 then
+            table.insert(args, "--start=" .. node.meta.position)
+          end
+          if node.meta.aid then table.insert(args, "--aid=" .. node.meta.aid) end
+          if node.meta.sid and #node.meta.sid > 0 then table.insert(args, "--sid=" .. node.meta.sid) end
+
+          local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "),
+            MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
+          local updatedData = Conf.parse(h:read("*a"))
+          h:close()
+          for k, v in pairs(updatedData) do node.meta[k] = v end
+          appendMetadata(node.path, updatedData)
+        end
+      }),
+      MenuItemComponent:new({
+        label = audioLabel,
+        target = ":audio",
+        node = video,
+        select = function()
+          table.insert(state.path, ":audio")
+          state.selectedIndex = 1
+          resetScroll()
+        end
+      }),
+      MenuItemComponent:new({
+        label = subLabel,
+        target = ":sub",
+        node = video,
+        select = function()
+          table.insert(state.path, ":sub")
+          state.selectedIndex = 1
+          resetScroll()
+        end
+      })
     }
   end
 
   local dir = getNode(state.path)
   if not dir or dir.type ~= "directory" then return {} end
 
-  local items = {}
+  local raw_items = {}
   for name, child in pairs(dir --[[@as DirectoryNode]].children) do
     local displayName = stripExtension(name)
     local item = { label = displayName, target = name, node = child }
@@ -125,15 +189,35 @@ local function getMenuItems()
     elseif child.type == "script" then
       item.action = "run_script"
     end
-    table.insert(items, item)
+    table.insert(raw_items, item)
   end
 
-  table.sort(items, function(a, b)
+  table.sort(raw_items, function(a, b)
     local aPct, bPct = watchPct(a.node), watchPct(b.node)
     local aCat = aPct >= 1 and aPct <= 89 and 1 or (aPct == 0 and 2 or 3)
     local bCat = bPct >= 1 and bPct <= 89 and 1 or (bPct == 0 and 2 or 3)
     return aCat ~= bCat and aCat < bCat or a.label < b.label
   end)
+
+  local items = {}
+  for _, raw_item in ipairs(raw_items) do
+    local action = raw_item.action or "browse"
+    local selectFn
+    if action == "play_wii_game" or action == "run_script" then
+      selectFn = function()
+        local cmd = action == "play_wii_game" and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
+        io.popen(string.format(cmd, MEDIA_ROOT .. "/" .. table.concat(state.path, "/") .. "/" .. raw_item.target))
+      end
+    else -- browse
+      selectFn = function()
+        table.insert(state.path, raw_item.target)
+        state.selectedIndex = 1
+        resetScroll()
+      end
+    end
+    raw_item.select = selectFn
+    table.insert(items, MenuItemComponent:new(raw_item))
+  end
   return items
 end
 
@@ -143,56 +227,14 @@ local function targetOffset()
   return listHeight <= h * 0.8 and (listHeight - UI.itemHeight) / 2 or (state.selectedIndex - 1) * UI.itemHeight
 end
 
-local function resetScroll()
+function resetScroll()
   state.scrollOffset = targetOffset() - UI.itemHeight * 0.5
 end
 
 function navigateIn()
-  local items, item = getMenuItems(), getMenuItems()[state.selectedIndex]
+  local item = getMenuItems()[state.selectedIndex]
   if not item then return end
-  local action = item.action or "browse"
-
-  if action == "play" then
-    local node = item.node --[[@as VideoNode]]
-    local args = { '--fullscreen', '--msg-level=all=no', '--save-position-on-quit=no',
-      '--input-default-bindings=no', '--osd-on-seek=msg-bar', '--sub-font-provider=none',
-      '--sub-font-size=60', '--osd-font-provider=none', '--osd-font-size=60',
-      string.format('--config-dir="%s/mpv"', SAVE_DIR),
-      string.format('--script="%s/mpv/runtime.lua"', SAVE_DIR),
-      string.format('--script="%s/mpv/visualiser.lua"', SAVE_DIR) }
-
-    if node.meta.position and tonumber(node.meta.position) < tonumber(node.meta.duration) - 3 then
-      table.insert(args, "--start=" .. node.meta.position)
-    end
-    if node.meta.aid then table.insert(args, "--aid=" .. node.meta.aid) end
-    if node.meta.sid and #node.meta.sid > 0 then table.insert(args, "--sid=" .. node.meta.sid) end
-
-    local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "),
-      MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
-    local updatedData = Conf.parse(h:read("*a"))
-    h:close()
-    for k, v in pairs(updatedData) do node.meta[k] = v end
-    appendMetadata(node.path, updatedData)
-  elseif action == "play_wii_game" or action == "run_script" then
-    local cmd = action == "play_wii_game" and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
-    io.popen(string.format(cmd, MEDIA_ROOT .. "/" .. table.concat(state.path, "/") .. "/" .. item.target))
-  elseif action == "audio_menu" or action == "sub_menu" then
-    table.insert(state.path, item.target)
-    state.selectedIndex = 1
-    resetScroll()
-  elseif action == "select_audio" or action == "select_sub" then
-    local video = getVideoContext() --[[@as VideoNode]]
-    local key = action == "select_audio" and "aid" or "sid"
-    video.meta[key] = item.trackId
-    appendMetadata(video.path, { [key] = item.trackId })
-    table.remove(state.path)
-    state.selectedIndex = action == "select_audio" and 2 or 3
-    resetScroll()
-  else
-    table.insert(state.path, item.target)
-    state.selectedIndex = 1
-    resetScroll()
-  end
+  item:select()
 end
 
 function navigateOut()
@@ -309,8 +351,9 @@ function love.draw()
   for i, item in ipairs(getMenuItems()) do
     local y = h / 2 - state.scrollOffset + (i - 1) * UI.itemHeight
     if y > -UI.itemHeight and y < h then
-      love.graphics.setColor(i == state.selectedIndex and UI.accentColor or UI.textColor)
-      love.graphics.print((i == state.selectedIndex and "> " or "  ") .. item.label, 50, y)
+      item.focused = i == state.selectedIndex
+      love.graphics.setColor(item.focused and UI.accentColor or UI.textColor)
+      item:draw(UI.fontSize, 50, y, w, UI.itemHeight)
     end
   end
   love.graphics.setShader()
