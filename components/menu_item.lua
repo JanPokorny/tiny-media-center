@@ -1,4 +1,4 @@
-local Style = require("style")
+local config = require("config")
 
 ---@class (exact) MenuItemComponentInit
 ---@field label string
@@ -27,7 +27,7 @@ end
 ---@param w integer
 ---@param h integer
 function MenuItemComponent:draw(x, y, w, h)
-  love.graphics.setColor(self.focused and Style.ACCENT_COLOR or Style.TEXT_COLOR)
+  love.graphics.setColor(self.focused and config.style.accent_color or config.style.text_color)
   love.graphics.print((self.focused and "> " or "  ") .. self.label, x, y)
 end
 

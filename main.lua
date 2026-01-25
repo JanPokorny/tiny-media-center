@@ -19,7 +19,6 @@
 
 local tinytoml = require("vendor.tinytoml")
 local config = require("config")
-local Style = require("style")
 local BackgroundComponent = require("components.background")
 local MenuItemComponent = require("components.menu_item")
 local MenuComponent = require("components.menu")
@@ -321,8 +320,8 @@ function love.load()
   h:close()
 
   mediaTree.children = children
-  love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", Style.FONT_SIZE))
-  love.graphics.setBackgroundColor(Style.BG_COLOR)
+  love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", config.style.font_size))
+  love.graphics.setBackgroundColor(config.style.background_color)
   love.mouse.setVisible(false)
   love.math.setRandomSeed(os.time())
   currentMenu = MenuComponent:new({
@@ -343,7 +342,7 @@ function love.draw()
 
   local title = state.path[#state.path] or "tiny media center"
   if title:sub(1, 1) == ":" then title = title:sub(2) end
-  love.graphics.setColor(Style.DIM_COLOR)
+  love.graphics.setColor(config.style.dim_color)
   love.graphics.print(stripExtension(title), 0, 0)
 end
 

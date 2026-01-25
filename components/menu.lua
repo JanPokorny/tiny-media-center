@@ -1,4 +1,4 @@
-local Style = require("style")
+local config = require("config")
 
 local listFadeShader = love.graphics.newShader([[
   extern number screen_height; extern number header_height; extern number fade_top_size; extern number fade_bot_size;
@@ -39,13 +39,13 @@ function MenuComponent:new(o)
 end
 
 function MenuComponent:getTargetOffset()
-  local listHeight = #self.items * (Style.FONT_SIZE * 1.125)
-  return listHeight <= love.graphics.getHeight() * 0.8 and (listHeight - (Style.FONT_SIZE * 1.125)) / 2 or (self.selectedIndex - 1) * (Style.FONT_SIZE * 1.125)
+  local listHeight = #self.items * (config.style.font_size * 1.125)
+  return listHeight <= love.graphics.getHeight() * 0.8 and (listHeight - (config.style.font_size * 1.125)) / 2 or (self.selectedIndex - 1) * (config.style.font_size * 1.125)
 end
 
 function MenuComponent:resetScroll()
   local target = self:getTargetOffset()
-  self.scrollOffset = target - (Style.FONT_SIZE * 1.125) * 0.5
+  self.scrollOffset = target - (config.style.font_size * 1.125) * 0.5
 end
 
 function MenuComponent:update(dt)
@@ -53,7 +53,7 @@ function MenuComponent:update(dt)
 end
 
 function MenuComponent:draw(x, y, w, h)
-  local headerHeight = (Style.FONT_SIZE * 1.125) * 1.2
+  local headerHeight = (config.style.font_size * 1.125) * 1.2
   local fadeTopSize, fadeBotSize = h * 0.3 - headerHeight, h - h * 0.7
 
   listFadeShader:send("screen_height", h)
@@ -63,10 +63,10 @@ function MenuComponent:draw(x, y, w, h)
   love.graphics.setShader(listFadeShader)
 
   for i, item in ipairs(self.items) do
-    local itemY = y + h / 2 - self.scrollOffset + (i - 1) * (Style.FONT_SIZE * 1.125)
-    if itemY > y - (Style.FONT_SIZE * 1.125) and itemY < y + h then
+    local itemY = y + h / 2 - self.scrollOffset + (i - 1) * (config.style.font_size * 1.125)
+    if itemY > y - (config.style.font_size * 1.125) and itemY < y + h then
       item.focused = i == self.selectedIndex
-      item:draw(x + 50, itemY, w, (Style.FONT_SIZE * 1.125))
+      item:draw(x + 50, itemY, w, (config.style.font_size * 1.125))
     end
   end
   love.graphics.setShader()
