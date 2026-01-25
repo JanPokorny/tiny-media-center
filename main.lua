@@ -25,7 +25,6 @@ local MenuComponent = require("components.menu")
 
 local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
 local SAVE_DIR = love.filesystem.getSaveDirectory()
-local METADATA_FILE = "metadata/media.conf"
 
 local state = { path = {} }
 ---@type DirectoryNode
@@ -267,20 +266,6 @@ function love.load()
   love.filesystem.createDirectory("mpv")
   for _, f in ipairs({ "preflight.lua", "runtime.lua", "visualiser.lua", "input.conf", "subfont.ttf" }) do
     love.filesystem.write("mpv/" .. f, love.filesystem.read("attachments/mpv/" .. f))
-  end
-
-  local oldMetaRaw = love.filesystem.read(METADATA_FILE)
-  if oldMetaRaw then
-    local oldMeta = Conf.parse(oldMetaRaw)
-    for path, data in pairs(oldMeta) do
-      local tmcPath = stripExtension(path) .. ".tmc"
-      local f = io.open(MEDIA_ROOT .. "/" .. tmcPath, "w")
-      if f then
-        f:write(Conf.stringify(data))
-        f:close()
-      end
-    end
-    love.filesystem.rename(METADATA_FILE, METADATA_FILE .. ".bak")
   end
 
   local children = {}
