@@ -25,7 +25,6 @@ local MenuComponent = require("components.menu")
 
 local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
 local SAVE_DIR = love.filesystem.getSaveDirectory()
-local METADATA_FILE = "metadata/media.conf"
 
 local state = { path = {} }
 ---@type DirectoryNode
@@ -36,10 +35,15 @@ local function stripExtension(filename)
   return filename:match("(.+)%.[^.]+$") or filename
 end
 
----@param videoPath string[]
----@param data table<string, any>
-local function appendMetadata(videoPath, data)
-  love.filesystem.append(METADATA_FILE, "\n" .. Conf.stringify({ [table.concat(videoPath, "/")] = data }))
+---@param node VideoNode
+local function saveMetadata(node)
+  local mediaPath = table.concat(node.path, "/")
+  local tmcPath = stripExtension(mediaPath) .. ".tmc"
+  local f = io.open(MEDIA_ROOT .. "/" .. tmcPath, "w")
+  if f then
+    f:write(Conf.stringify(node.meta))
+    f:close()
+  end
 end
 
 ---@param path string[]
@@ -102,7 +106,7 @@ getAudioSubMenuItems = function(video, menu)
         local videoFromCtx = getVideoContext(oldPath) --[[@as VideoNode]]
         local key = raw_item.action == "select_audio" and "aid" or "sid"
         videoFromCtx.meta[key] = raw_item.trackId
-        appendMetadata(videoFromCtx.path, { [key] = raw_item.trackId })
+        saveMetadata(videoFromCtx)
 
         if parentMenu.navigateOut then
           parentMenu.navigateOut()
@@ -152,7 +156,7 @@ getVideoMenuItems = function(video)
         local updatedData = Conf.parse(h:read("*a"))
         h:close()
         for k, v in pairs(updatedData) do node.meta[k] = v end
-        appendMetadata(node.path, updatedData)
+        saveMetadata(node)
       end
     }),
     MenuItemComponent:new({
@@ -258,13 +262,11 @@ end
 local backgroundComponent = BackgroundComponent:new()
 
 function love.load()
-  love.filesystem.createDirectory("metadata")
   love.filesystem.createDirectory("mpv")
   for _, f in ipairs({ "preflight.lua", "runtime.lua", "visualiser.lua", "input.conf", "subfont.ttf" }) do
     love.filesystem.write("mpv/" .. f, love.filesystem.read("attachments/mpv/" .. f))
   end
 
-  local meta = Conf.parse(love.filesystem.read(METADATA_FILE)) or {}
   local children = {}
   local typeByExt = { mp4 = "video", mkv = "video", avi = "video", mp3 = "video", rvz = "wii_game", sh = "script" }
 
@@ -293,20 +295,24 @@ function love.load()
 
           local name = parts[#parts]
           curPath[#curPath + 1] = name
-          local key = table.concat(curPath, "/")
+          local mediaPath = table.concat(curPath, "/")
           local node = { name = name, path = curPath, type = nodeType }
 
           if nodeType == "video" then
-            node.meta = meta[key] or {}
+            local f = io.open(MEDIA_ROOT .. "/" .. stripExtension(mediaPath) .. ".tmc", "r")
+            if f then
+              node.meta = Conf.parse(f:read("*a"))
+              f:close()
+            end
+            node.meta = node.meta or {}
             if not node.meta.duration then
-              local cmd = string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null',
-                SAVE_DIR, MEDIA_ROOT .. "/" .. key)
+              local cmd = string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null', SAVE_DIR, MEDIA_ROOT .. "/" .. mediaPath)
               local ph = io.popen(cmd)
               local extracted = Conf.parse(ph:read("*a"))
               ph:close()
               for k, v in pairs(extracted) do node.meta[k] = v end
+              if next(node.meta) then saveMetadata(node) end
             end
-            meta[key] = node.meta
           end
           cur[name] = node
         end
@@ -316,7 +322,6 @@ function love.load()
   h:close()
 
   mediaTree.children = children
-  love.filesystem.write(METADATA_FILE, Conf.stringify(meta))
   love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", Style.FONT_SIZE))
   love.graphics.setBackgroundColor(Style.BG_COLOR)
   love.mouse.setVisible(false)
