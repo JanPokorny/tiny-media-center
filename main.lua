@@ -37,9 +37,15 @@ local function stripExtension(filename)
 end
 
 ---@param videoPath string[]
----@param data table<string, any>
-local function appendMetadata(videoPath, data)
-  love.filesystem.append(METADATA_FILE, "\n" .. Conf.stringify({ [table.concat(videoPath, "/")] = data }))
+---@param node VideoNode
+local function saveMetadata(node)
+  local mediaPath = table.concat(node.path, "/")
+  local tmcPath = stripExtension(mediaPath) .. ".tmc"
+  local f = io.open(MEDIA_ROOT .. "/" .. tmcPath, "w")
+  if f then
+    f:write(Conf.stringify(node.meta))
+    f:close()
+  end
 end
 
 ---@param path string[]
@@ -102,7 +108,7 @@ getAudioSubMenuItems = function(video, menu)
         local videoFromCtx = getVideoContext(oldPath) --[[@as VideoNode]]
         local key = raw_item.action == "select_audio" and "aid" or "sid"
         videoFromCtx.meta[key] = raw_item.trackId
-        appendMetadata(videoFromCtx.path, { [key] = raw_item.trackId })
+        saveMetadata(videoFromCtx)
 
         if parentMenu.navigateOut then
           parentMenu.navigateOut()
@@ -152,7 +158,7 @@ getVideoMenuItems = function(video)
         local updatedData = Conf.parse(h:read("*a"))
         h:close()
         for k, v in pairs(updatedData) do node.meta[k] = v end
-        appendMetadata(node.path, updatedData)
+        saveMetadata(node)
       end
     }),
     MenuItemComponent:new({
@@ -258,13 +264,25 @@ end
 local backgroundComponent = BackgroundComponent:new()
 
 function love.load()
-  love.filesystem.createDirectory("metadata")
   love.filesystem.createDirectory("mpv")
   for _, f in ipairs({ "preflight.lua", "runtime.lua", "visualiser.lua", "input.conf", "subfont.ttf" }) do
     love.filesystem.write("mpv/" .. f, love.filesystem.read("attachments/mpv/" .. f))
   end
 
-  local meta = Conf.parse(love.filesystem.read(METADATA_FILE)) or {}
+  local oldMetaRaw = love.filesystem.read(METADATA_FILE)
+  if oldMetaRaw then
+    local oldMeta = Conf.parse(oldMetaRaw)
+    for path, data in pairs(oldMeta) do
+      local tmcPath = stripExtension(path) .. ".tmc"
+      local f = io.open(MEDIA_ROOT .. "/" .. tmcPath, "w")
+      if f then
+        f:write(Conf.stringify(data))
+        f:close()
+      end
+    end
+    love.filesystem.rename(METADATA_FILE, METADATA_FILE .. ".bak")
+  end
+
   local children = {}
   local typeByExt = { mp4 = "video", mkv = "video", avi = "video", mp3 = "video", rvz = "wii_game", sh = "script" }
 
@@ -280,7 +298,8 @@ function love.load()
         parts[#parts + 1] = p
       end
       if parts then
-        local nodeType = typeByExt[parts[#parts]:match("%.([^%.]+)$")]
+        local ext = parts[#parts]:match("%.([^%.]+)$")
+        local nodeType = typeByExt[ext]
         if nodeType then
           local cur, curPath = children, {}
           for i = 1, #parts - 1 do
@@ -293,20 +312,26 @@ function love.load()
 
           local name = parts[#parts]
           curPath[#curPath + 1] = name
-          local key = table.concat(curPath, "/")
+          local mediaPath = table.concat(curPath, "/")
           local node = { name = name, path = curPath, type = nodeType }
 
           if nodeType == "video" then
-            node.meta = meta[key] or {}
+            local tmcPath = stripExtension(mediaPath) .. ".tmc"
+            local f = io.open(MEDIA_ROOT .. "/" .. tmcPath, "r")
+            if f then
+              node.meta = Conf.parse(f:read("*a"))
+              f:close()
+            end
+            node.meta = node.meta or {}
             if not node.meta.duration then
               local cmd = string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null',
-                SAVE_DIR, MEDIA_ROOT .. "/" .. key)
+                SAVE_DIR, MEDIA_ROOT .. "/" .. mediaPath)
               local ph = io.popen(cmd)
               local extracted = Conf.parse(ph:read("*a"))
               ph:close()
               for k, v in pairs(extracted) do node.meta[k] = v end
+              if next(node.meta) then saveMetadata(node) end
             end
-            meta[key] = node.meta
           end
           cur[name] = node
         end
@@ -316,7 +341,6 @@ function love.load()
   h:close()
 
   mediaTree.children = children
-  love.filesystem.write(METADATA_FILE, Conf.stringify(meta))
   love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", Style.FONT_SIZE))
   love.graphics.setBackgroundColor(Style.BG_COLOR)
   love.mouse.setVisible(false)
