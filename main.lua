@@ -17,7 +17,7 @@
 ---@class ScriptNode : Node
 ---@field type "script"
 
-local Conf = require("utils.conf")
+local tinytoml = require("vendor.tinytoml")
 local config = require("config")
 local Style = require("style")
 local BackgroundComponent = require("components.background")
@@ -41,7 +41,7 @@ local function saveMetadata(node)
   local tmcPath = stripExtension(mediaPath) .. ".tmc"
   local f = io.open(config.media_path .. "/" .. tmcPath, "w")
   if f then
-    f:write(Conf.stringify(node.meta))
+    f:write(tinytoml.encode(node.meta))
     f:close()
   end
 end
@@ -153,7 +153,7 @@ getVideoMenuItems = function(video)
 
         local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "),
           config.media_path .. "/" .. table.concat(node.path, "/")))
-        local updatedData = Conf.parse(h:read("*a"))
+        local updatedData = tinytoml.parse(h:read("*a"), { load_from_string = true })
         h:close()
         for k, v in pairs(updatedData) do node.meta[k] = v end
         saveMetadata(node)
@@ -301,14 +301,13 @@ function love.load()
           if nodeType == "video" then
             local f = io.open(config.media_path .. "/" .. stripExtension(mediaPath) .. ".tmc", "r")
             if f then
-              node.meta = Conf.parse(f:read("*a"))
+              node.meta = tinytoml.parse(f:read("*a"), { load_from_string = true })
               f:close()
             end
             node.meta = node.meta or {}
             if not node.meta.duration then
-              local cmd = string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null', SAVE_DIR, config.media_path .. "/" .. mediaPath)
-              local ph = io.popen(cmd)
-              local extracted = Conf.parse(ph:read("*a"))
+              local ph = io.popen(string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null', SAVE_DIR, config.media_path .. "/" .. mediaPath))
+              local extracted = tinytoml.parse(ph:read("*a"), { load_from_string = true })
               ph:close()
               for k, v in pairs(extracted) do node.meta[k] = v end
               if next(node.meta) then saveMetadata(node) end

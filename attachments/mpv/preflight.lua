@@ -5,7 +5,7 @@ mp.register_event("file-loaded", function()
     if track.type == "audio" or track.type == "sub" then
       io.stdout:write(
         string.format(
-          "track_%s_%d=%s%s%s%s\n",
+          "track_%s_%d=\"%s%s%s%s\"\n",
           track.type,
           track.id,
           track.lang or "?",
