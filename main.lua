@@ -23,7 +23,32 @@ local BackgroundComponent = require("components.background")
 local MenuItemComponent = require("components.menu_item")
 local MenuComponent = require("components.menu")
 
-local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
+local function getConfig()
+  local xdgConfigHome = os.getenv("XDG_CONFIG_HOME")
+  if not xdgConfigHome or xdgConfigHome == "" then
+    xdgConfigHome = os.getenv("HOME") .. "/.config"
+  end
+  local configPath = xdgConfigHome .. "/tiny-media-center/config.toml"
+
+  -- love.filesystem is sandboxed, so use standard io
+  local file, err = io.open(configPath, "r")
+  if not file then
+    return {}
+  end
+  local content = file:read("*a")
+  file:close()
+
+  local success, config = pcall(Conf.parse, content)
+  if not success then
+    -- print is not available here, should use a log function if available
+    -- for now, just return empty and let defaults kick in
+    return {}
+  end
+  return config or {}
+end
+
+local config = getConfig()
+local MEDIA_ROOT = config.media_path or "."
 local SAVE_DIR = love.filesystem.getSaveDirectory()
 local METADATA_FILE = "metadata/media.conf"
 
