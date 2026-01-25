@@ -18,12 +18,12 @@
 ---@field type "script"
 
 local Conf = require("utils.conf")
+local config = require("config")
 local Style = require("style")
 local BackgroundComponent = require("components.background")
 local MenuItemComponent = require("components.menu_item")
 local MenuComponent = require("components.menu")
 
-local MEDIA_ROOT = os.getenv("TMC_MEDIA_PATH") or "./media"
 local SAVE_DIR = love.filesystem.getSaveDirectory()
 
 local state = { path = {} }
@@ -39,7 +39,7 @@ end
 local function saveMetadata(node)
   local mediaPath = table.concat(node.path, "/")
   local tmcPath = stripExtension(mediaPath) .. ".tmc"
-  local f = io.open(MEDIA_ROOT .. "/" .. tmcPath, "w")
+  local f = io.open(config.media_path .. "/" .. tmcPath, "w")
   if f then
     f:write(Conf.stringify(node.meta))
     f:close()
@@ -152,7 +152,7 @@ getVideoMenuItems = function(video)
         if node.meta.sid and #node.meta.sid > 0 then table.insert(args, "--sid=" .. node.meta.sid) end
 
         local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "),
-          MEDIA_ROOT .. "/" .. table.concat(node.path, "/")))
+          config.media_path .. "/" .. table.concat(node.path, "/")))
         local updatedData = Conf.parse(h:read("*a"))
         h:close()
         for k, v in pairs(updatedData) do node.meta[k] = v end
@@ -230,7 +230,7 @@ getDirectoryMenuItems = function(path)
     if action == "play_wii_game" or action == "run_script" then
       raw_item.select = function()
         local cmd = action == "play_wii_game" and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
-        io.popen(string.format(cmd, MEDIA_ROOT .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target))
+        io.popen(string.format(cmd, config.media_path .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target))
       end
     else -- browse
       raw_item.select = function()
@@ -270,7 +270,7 @@ function love.load()
   local children = {}
   local typeByExt = { mp4 = "video", mkv = "video", avi = "video", mp3 = "video", rvz = "wii_game", sh = "script" }
 
-  local h = io.popen('cd "' .. MEDIA_ROOT .. '" && find . -type f 2>/dev/null')
+  local h = io.popen('cd "' .. config.media_path .. '" && find . -type f 2>/dev/null')
   for line in h:lines() do
     local rel = line:match("^%./(.+)")
     if rel then
@@ -299,14 +299,14 @@ function love.load()
           local node = { name = name, path = curPath, type = nodeType }
 
           if nodeType == "video" then
-            local f = io.open(MEDIA_ROOT .. "/" .. stripExtension(mediaPath) .. ".tmc", "r")
+            local f = io.open(config.media_path .. "/" .. stripExtension(mediaPath) .. ".tmc", "r")
             if f then
               node.meta = Conf.parse(f:read("*a"))
               f:close()
             end
             node.meta = node.meta or {}
             if not node.meta.duration then
-              local cmd = string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null', SAVE_DIR, MEDIA_ROOT .. "/" .. mediaPath)
+              local cmd = string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null', SAVE_DIR, config.media_path .. "/" .. mediaPath)
               local ph = io.popen(cmd)
               local extracted = Conf.parse(ph:read("*a"))
               ph:close()
