@@ -1,5 +1,7 @@
 #!/bin/bash
-
+set -euxo pipefail
 cd -- "$( dirname -- "${BASH_SOURCE[0]}" )"
 git pull
-love .
+LOVEDIR=$(pwd)
+cd /media
+exec love "$LOVEDIR"
