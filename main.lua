@@ -489,8 +489,10 @@ function love.draw()
 
   local title = state.path[#state.path] or "tiny media center"
   if title:sub(1, 1) == ":" then title = title:sub(2) end
+  local node = #state.path > 0 and getNode(state.path) or nil
+  local displayTitle = (node and node.type ~= "directory") and stripExtension(title) or title
   love.graphics.setColor(config.style.dim_color)
-  love.graphics.print(stripExtension(title), 0, 0)
+  love.graphics.print(displayTitle, 0, 0)
 
   local videoNode = getVideoContext(state.path)
   if videoNode and videoNode.type == "video" then
