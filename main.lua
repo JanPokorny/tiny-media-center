@@ -284,18 +284,20 @@ getDirectoryMenuItems = function(path)
         state.path = { unpack(oldPath) }
         table.insert(state.path, raw_item.target)
 
-        local newItems
-        if raw_item.node.type == "video" then
-          newItems = getVideoMenuItems(raw_item.node)
-        else -- directory
-          newItems = getDirectoryMenuItems(state.path)
-        end
-        currentMenu = MenuComponent:new({ items = newItems, selectedIndex = 1 })
-        currentMenu:resetScroll()
-        currentMenu.navigateOut = function()
-          currentMenu = parentMenu
-          state.path = oldPath
+        local function showMenu(newItems)
+          currentMenu = MenuComponent:new({ items = newItems, selectedIndex = 1 })
           currentMenu:resetScroll()
+          currentMenu.navigateOut = function()
+            currentMenu = parentMenu
+            state.path = oldPath
+            currentMenu:resetScroll()
+          end
+        end
+
+        if raw_item.node.type == "video" then
+          showMenu(getVideoMenuItems(raw_item.node))
+        else -- directory
+          showMenu(getDirectoryMenuItems(state.path))
         end
       end
     end
@@ -307,7 +309,7 @@ end
 local backgroundComponent = BackgroundComponent:new()
 
 local function buildMediaTree(callback)
-  runBackground("Scanning media...", string.format([[
+  runBackground("Processing new media...", string.format([[
     local ch = love.thread.getChannel("result")
     local tinytoml = require("vendor.tinytoml")
     local mediaPath = %q
@@ -316,6 +318,8 @@ local function buildMediaTree(callback)
     local function stripExtension(filename)
       return filename:match("(.+)%%.[^.]+$") or filename
     end
+
+    local status = love.thread.getChannel("status")
 
     local children = {}
     local typeByExt = { mp4 = "video", mkv = "video", avi = "video", mp3 = "video", rvz = "wii_game", sh = "script" }
@@ -353,7 +357,9 @@ local function buildMediaTree(callback)
               end
               local parsed = meta ~= "" and tinytoml.parse(meta, { load_from_string = true }) or {}
               if not parsed.duration then
-                local ph = io.popen(string.format('mpv --script="%%s/mpv/preflight.lua" --msg-level=all=no "%%s" 2>/dev/null', saveDir, mediaPath .. "/" .. relPath))
+                local fullPath = mediaPath .. "/" .. relPath
+                status:push(relPath)
+                local ph = io.popen(string.format('mpv --script="%%s/mpv/preflight.lua" --msg-level=all=no "%%s" 2>/dev/null', saveDir, fullPath))
                 local extracted = ph:read("*a")
                 ph:close()
                 if extracted and #extracted > 0 then
@@ -361,6 +367,7 @@ local function buildMediaTree(callback)
                   local fw = io.open(mediaPath .. "/" .. tmcPath, "w")
                   if fw then fw:write(meta); fw:close() end
                 end
+                os.execute('subliminal download -l en -HI -FO "' .. fullPath .. '"')
               end
               entry = entry .. "\t" .. meta
             end
@@ -436,6 +443,14 @@ end
 function love.update(dt)
   if loadingScreen then
     love.timer.sleep(1)
+
+    local status = love.thread.getChannel("status")
+    local latest = nil
+    repeat
+      local msg = status:pop()
+      if msg then latest = msg end
+    until not msg
+    if latest then loadingScreen.subtext = latest end
 
     if activeThread then
       local err = activeThread:getError()
