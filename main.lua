@@ -122,9 +122,7 @@ end
 getVideoMenuItems = function(video)
   local videoNode = video --[[@as VideoNode]]
   local meta, pct = videoNode.meta, watchPct(videoNode)
-  local playLabel = "Play" .. (pct > 0 and " [" .. pct .. "%" ..
-      (meta.duration and ", ends at " .. os.date("%H:%M", os.time() + tonumber(meta.duration) - tonumber(meta.position or 0)) or "") ..
-      "]" or "")
+  local playLabel = "Play"
   local audioLabel = meta.aid and meta["track_audio_" .. meta.aid] and "Audio [" .. meta["track_audio_" .. meta.aid] .. "]" or
       "Audio"
   local subLabel = meta.sid == "" and "Subtitles [none]" or
@@ -207,7 +205,11 @@ getDirectoryMenuItems = function(path)
     local item = { label = displayName, target = name, node = child }
     if child.type == "video" then
       local pct = watchPct(child)
-      if pct > 0 then item.label = displayName .. " [" .. pct .. "%]" end
+      if pct >= 100 then
+        item.dim = true
+      elseif pct > 0 then
+        item.label = "* " .. displayName
+      end
     elseif child.type == "wii_game" then
       item.action = "play_wii_game"
     elseif child.type == "script" then
@@ -345,6 +347,36 @@ function love.draw()
   if title:sub(1, 1) == ":" then title = title:sub(2) end
   love.graphics.setColor(config.style.dim_color)
   love.graphics.print(stripExtension(title), 0, 0)
+
+  local videoNode = getVideoContext(state.path)
+  if videoNode and videoNode.type == "video" then
+    local meta = videoNode --[[@as VideoNode]].meta
+    local pct = watchPct(videoNode)
+    local barHeight = 4
+
+    love.graphics.setColor(config.style.text_color[1], config.style.text_color[2], config.style.text_color[3], 0.2)
+    love.graphics.rectangle("fill", 0, h - barHeight, w, barHeight)
+    if pct > 0 then
+      love.graphics.setColor(config.style.accent_color)
+      love.graphics.rectangle("fill", 0, h - barHeight, w * pct / 100, barHeight)
+    end
+
+    if meta.duration then
+      local remaining = tonumber(meta.duration) - tonumber(meta.position or 0)
+      local now = os.date("%H:%M")
+      local endTime = os.date("%H:%M", os.time() + remaining)
+      local mins = math.floor(remaining / 60)
+      local hours = math.floor(mins / 60)
+      mins = mins % 60
+      local remStr = hours > 0 and string.format("%dh%02dmin", hours, mins) or string.format("%dmin", mins)
+      local timeText = string.format("%s  --  %s  ->  %s", now, remStr, endTime)
+
+      local font = love.graphics.getFont()
+      local textW = font:getWidth(timeText)
+      love.graphics.setColor(config.style.dim_color)
+      love.graphics.print(timeText, (w - textW) / 2, h - barHeight - config.style.font_size * 1.2)
+    end
+  end
 end
 
 function love.keypressed(key)
@@ -356,6 +388,8 @@ function love.keypressed(key)
     currentMenu:navigateIn()
   elseif key == "escape" or key == "appback" or key == "sleep" then
     if currentMenu.navigateOut then currentMenu.navigateOut() end
+  elseif key == "r" then
+    love.event.quit("restart")
   elseif #key == 1 then
     currentMenu:jumpToLetter(key)
   end

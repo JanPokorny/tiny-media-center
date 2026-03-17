@@ -50,6 +50,9 @@ end
 
 function MenuComponent:update(dt)
   self.scrollOffset = self.scrollOffset + (self:getTargetOffset() - self.scrollOffset) * 10 * dt
+  for _, item in ipairs(self.items) do
+    item:update(dt)
+  end
 end
 
 function MenuComponent:draw(x, y, w, h)
