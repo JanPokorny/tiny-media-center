@@ -92,7 +92,17 @@ local function runBackground(text, code, callback, streaming)
   activeThread = thread
   threadCallback = callback
   threadStreaming = streaming or false
+  love.window.setVSync(0)
+  love.timer.sleep(0)
   thread:start()
+end
+
+local function stopBackground()
+  loadingScreen = nil
+  activeThread = nil
+  threadCallback = nil
+  threadStreaming = false
+  love.window.setVSync(1)
 end
 
 local getAudioSubMenuItems
@@ -401,10 +411,7 @@ local function processScanResults()
   end
 
   mediaTree.children = children
-  loadingScreen = nil
-  activeThread = nil
-  threadCallback = nil
-  threadStreaming = false
+  stopBackground()
   currentMenu = MenuComponent:new({
     items = getDirectoryMenuItems(state.path)
   })
@@ -427,18 +434,13 @@ function love.load()
 end
 
 function love.update(dt)
-  backgroundComponent:update(dt)
-
   if loadingScreen then
-    loadingScreen:update(dt)
+    love.timer.sleep(1)
 
     if activeThread then
       local err = activeThread:getError()
       if err then
-        loadingScreen = nil
-        activeThread = nil
-        threadCallback = nil
-        threadStreaming = false
+        stopBackground()
       elseif not activeThread:isRunning() then
         if threadStreaming then
           processScanResults()
@@ -446,10 +448,7 @@ function love.update(dt)
           local ch = love.thread.getChannel("result")
           local result = ch:pop() or ""
           local cb = threadCallback
-          loadingScreen = nil
-          activeThread = nil
-          threadCallback = nil
-          threadStreaming = false
+          stopBackground()
           if cb then cb(result) end
         end
       end
@@ -457,17 +456,19 @@ function love.update(dt)
     return
   end
 
+  backgroundComponent:update(dt)
   currentMenu:update(dt)
 end
 
 function love.draw()
-  backgroundComponent:draw()
+  if not loadingScreen then
+    backgroundComponent:draw()
+  end
   local w, h = love.graphics.getDimensions()
 
   if loadingScreen then
     loadingScreen:draw()
-    return
-  end
+  else
 
   currentMenu:draw(0, 0, w, h)
 
@@ -504,6 +505,7 @@ function love.draw()
       love.graphics.setColor(config.style.dim_color)
       love.graphics.print(timeText, (w - textW) / 2, h - barHeight - config.style.font_size * 1.2)
     end
+  end
   end
 end
 
