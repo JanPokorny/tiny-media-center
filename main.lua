@@ -220,7 +220,8 @@ getDirectoryMenuItems = function(path)
     local aPct, bPct = watchPct(a.node), watchPct(b.node)
     local aCat = aPct >= 1 and aPct <= 89 and 1 or (aPct == 0 and 2 or 3)
     local bCat = bPct >= 1 and bPct <= 89 and 1 or (bPct == 0 and 2 or 3)
-    return aCat ~= bCat and aCat < bCat or a.label < b.label
+    if aCat ~= bCat then return aCat < bCat end
+    return a.label < b.label
   end)
 
   local items = {}
