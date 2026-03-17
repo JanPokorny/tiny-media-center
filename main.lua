@@ -22,6 +22,7 @@ local config = require("config")
 local BackgroundComponent = require("components.background")
 local MenuItemComponent = require("components.menu_item")
 local MenuComponent = require("components.menu")
+local LoadingScreen = require("components.loading_screen")
 
 local SAVE_DIR = love.filesystem.getSaveDirectory()
 
@@ -29,6 +30,10 @@ local state = { path = {} }
 ---@type DirectoryNode
 local mediaTree = { name = "", path = {}, type = "directory", children = {} }
 local currentMenu
+local loadingScreen = nil
+local activeThread = nil
+local threadCallback = nil
+local threadStreaming = false
 
 local function stripExtension(filename)
   return filename:match("(.+)%.[^.]+$") or filename
@@ -74,6 +79,20 @@ local function watchPct(node)
   local videoNode = node --[[@as VideoNode]]
   local pct = math.floor((tonumber(videoNode.meta.position or 0) / tonumber(videoNode.meta.duration)) * 100 + 0.5)
   return pct >= 90 and 100 or pct
+end
+
+---@param text string
+---@param code string
+---@param callback fun(result: string)
+---@param streaming? boolean
+local function runBackground(text, code, callback, streaming)
+  loadingScreen = LoadingScreen:new(text)
+  love.thread.getChannel("result"):clear()
+  local thread = love.thread.newThread(code)
+  activeThread = thread
+  threadCallback = callback
+  threadStreaming = streaming or false
+  thread:start()
 end
 
 local getAudioSubMenuItems
@@ -148,12 +167,21 @@ getVideoMenuItems = function(video)
         if node.meta.aid then table.insert(args, "--aid=" .. node.meta.aid) end
         if node.meta.sid and #node.meta.sid > 0 then table.insert(args, "--sid=" .. node.meta.sid) end
 
-        local h = io.popen(string.format('mpv %s "%s"', table.concat(args, " "),
-          config.media_path .. "/" .. table.concat(node.path, "/")))
-        local updatedData = tinytoml.parse(h:read("*a"), { load_from_string = true })
-        h:close()
-        for k, v in pairs(updatedData) do node.meta[k] = v end
-        saveMetadata(node)
+        local cmd = string.format('mpv %s "%s"', table.concat(args, " "),
+          config.media_path .. "/" .. table.concat(node.path, "/"))
+
+        runBackground("Playing...", string.format([[
+          local ch = love.thread.getChannel("result")
+          local h = io.popen(%q)
+          local output = h:read("*a")
+          h:close()
+          ch:push(output)
+        ]], cmd), function(result)
+          local updatedData = tinytoml.parse(result, { load_from_string = true })
+          for k, v in pairs(updatedData) do node.meta[k] = v end
+          saveMetadata(node)
+          currentMenu:setItems(getVideoMenuItems(video), 1)
+        end)
       end
     }),
     MenuItemComponent:new({
@@ -232,7 +260,12 @@ getDirectoryMenuItems = function(path)
     if action == "play_wii_game" or action == "run_script" then
       raw_item.select = function()
         local cmd = action == "play_wii_game" and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
-        io.popen(string.format(cmd, config.media_path .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target))
+        local fullCmd = string.format(cmd, config.media_path .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target)
+        runBackground(action == "play_wii_game" and "Playing..." or "Running...", string.format([[
+          local ch = love.thread.getChannel("result")
+          os.execute(%q)
+          ch:push("")
+        ]], fullCmd), function() end)
       end
     else -- browse
       raw_item.select = function()
@@ -263,84 +296,179 @@ end
 
 local backgroundComponent = BackgroundComponent:new()
 
-function love.load()
-  love.filesystem.createDirectory("mpv")
-  for _, f in ipairs({ "preflight.lua", "runtime.lua", "visualiser.lua", "input.conf", "subfont.ttf" }) do
-    love.filesystem.write("mpv/" .. f, love.filesystem.read("attachments/mpv/" .. f))
-  end
+local function buildMediaTree(callback)
+  runBackground("Scanning media...", string.format([[
+    local ch = love.thread.getChannel("result")
+    local tinytoml = require("vendor.tinytoml")
+    local mediaPath = %q
+    local saveDir = %q
 
-  local children = {}
-  local typeByExt = { mp4 = "video", mkv = "video", avi = "video", mp3 = "video", rvz = "wii_game", sh = "script" }
+    local function stripExtension(filename)
+      return filename:match("(.+)%%.[^.]+$") or filename
+    end
 
-  local h = io.popen('cd "' .. config.media_path .. '" && find . -type f 2>/dev/null')
-  for line in h:lines() do
-    local rel = line:match("^%./(.+)")
-    if rel then
-      local parts = {}
-      for p in rel:gmatch("[^/]+") do
-        if p:sub(1, 1) == "." then
-          parts = nil; break
+    local children = {}
+    local typeByExt = { mp4 = "video", mkv = "video", avi = "video", mp3 = "video", rvz = "wii_game", sh = "script" }
+
+    local h = io.popen('cd "' .. mediaPath .. '" && find . -type f 2>/dev/null')
+    for line in h:lines() do
+      local rel = line:match("^%%./(.*)")
+      if rel then
+        local parts = {}
+        for p in rel:gmatch("[^/]+") do
+          if p:sub(1, 1) == "." then
+            parts = nil; break
+          end
+          parts[#parts + 1] = p
         end
-        parts[#parts + 1] = p
-      end
-      if parts then
-        local nodeType = typeByExt[parts[#parts]:match("%.([^%.]+)$")]
-        if nodeType then
-          local cur, curPath = children, {}
-          for i = 1, #parts - 1 do
-            curPath[#curPath + 1] = parts[i]
-            cur[parts[i]] = cur[parts[i]] or {
-              name = parts[i], path = { unpack(curPath) }, type = "directory", children = {}
-            }
-            cur = cur[parts[i]].children
-          end
-
-          local name = parts[#parts]
-          curPath[#curPath + 1] = name
-          local mediaPath = table.concat(curPath, "/")
-          local node = { name = name, path = curPath, type = nodeType }
-
-          if nodeType == "video" then
-            local f = io.open(config.media_path .. "/" .. stripExtension(mediaPath) .. ".tmc", "r")
-            if f then
-              node.meta = tinytoml.parse(f:read("*a"), { load_from_string = true })
-              f:close()
+        if parts then
+          local nodeType = typeByExt[parts[#parts]:match("%%.([^%%.]+)$")]
+          if nodeType then
+            local curPath = {}
+            for i = 1, #parts - 1 do
+              curPath[#curPath + 1] = parts[i]
             end
-            node.meta = node.meta or {}
-            if not node.meta.duration then
-              local ph = io.popen(string.format('mpv --script="%s/mpv/preflight.lua" --msg-level=all=no "%s" 2>/dev/null', SAVE_DIR, config.media_path .. "/" .. mediaPath))
-              local extracted = tinytoml.parse(ph:read("*a"), { load_from_string = true })
-              ph:close()
-              for k, v in pairs(extracted) do node.meta[k] = v end
-              if next(node.meta) then saveMetadata(node) end
+            local name = parts[#parts]
+            curPath[#curPath + 1] = name
+            local relPath = table.concat(curPath, "/")
+            local entry = nodeType .. "\t" .. relPath
+
+            if nodeType == "video" then
+              local tmcPath = stripExtension(relPath) .. ".tmc"
+              local f = io.open(mediaPath .. "/" .. tmcPath, "r")
+              local meta = ""
+              if f then
+                meta = f:read("*a")
+                f:close()
+              end
+              local parsed = meta ~= "" and tinytoml.parse(meta, { load_from_string = true }) or {}
+              if not parsed.duration then
+                local ph = io.popen(string.format('mpv --script="%%s/mpv/preflight.lua" --msg-level=all=no "%%s" 2>/dev/null', saveDir, mediaPath .. "/" .. relPath))
+                local extracted = ph:read("*a")
+                ph:close()
+                if extracted and #extracted > 0 then
+                  meta = extracted
+                  local fw = io.open(mediaPath .. "/" .. tmcPath, "w")
+                  if fw then fw:write(meta); fw:close() end
+                end
+              end
+              entry = entry .. "\t" .. meta
             end
+
+            ch:push(entry)
           end
-          cur[name] = node
         end
       end
     end
+    h:close()
+    ch:push("__DONE__")
+  ]], config.media_path, SAVE_DIR), callback, true)
+end
+
+local function processScanResults()
+  local ch = love.thread.getChannel("result")
+  local children = {}
+
+  while true do
+    local entry = ch:pop()
+    if not entry or entry == "__DONE__" then break end
+
+    local nodeType, relPath, meta = entry:match("^([^\t]+)\t([^\t]+)\t?(.*)")
+    if nodeType and relPath then
+      local parts = {}
+      for p in relPath:gmatch("[^/]+") do parts[#parts + 1] = p end
+
+      local cur = children
+      local curPath = {}
+      for i = 1, #parts - 1 do
+        curPath[#curPath + 1] = parts[i]
+        cur[parts[i]] = cur[parts[i]] or {
+          name = parts[i], path = { unpack(curPath) }, type = "directory", children = {}
+        }
+        cur = cur[parts[i]].children
+      end
+
+      local name = parts[#parts]
+      curPath[#curPath + 1] = name
+      local node = { name = name, path = { unpack(curPath) }, type = nodeType }
+
+      if nodeType == "video" then
+        node.meta = (meta and #meta > 0) and tinytoml.parse(meta, { load_from_string = true }) or {}
+      end
+
+      cur[name] = node
+    end
   end
-  h:close()
 
   mediaTree.children = children
-  love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", config.style.font_size))
-  love.graphics.setBackgroundColor(config.style.background_color)
-  love.mouse.setVisible(false)
-  love.math.setRandomSeed(os.time())
+  loadingScreen = nil
+  activeThread = nil
+  threadCallback = nil
+  threadStreaming = false
   currentMenu = MenuComponent:new({
     items = getDirectoryMenuItems(state.path)
   })
   currentMenu:resetScroll()
 end
 
+function love.load()
+  love.filesystem.createDirectory("mpv")
+  for _, f in ipairs({ "preflight.lua", "runtime.lua", "visualiser.lua", "input.conf", "subfont.ttf" }) do
+    love.filesystem.write("mpv/" .. f, love.filesystem.read("attachments/mpv/" .. f))
+  end
+
+  love.graphics.setFont(love.graphics.newFont("attachments/mpv/subfont.ttf", config.style.font_size))
+  love.graphics.setBackgroundColor(config.style.background_color)
+  love.mouse.setVisible(false)
+  love.math.setRandomSeed(os.time())
+  currentMenu = MenuComponent:new({})
+
+  buildMediaTree(function() end)
+end
+
 function love.update(dt)
-  currentMenu:update(dt)
   backgroundComponent:update(dt)
+
+  if loadingScreen then
+    loadingScreen:update(dt)
+
+    if activeThread then
+      local err = activeThread:getError()
+      if err then
+        loadingScreen = nil
+        activeThread = nil
+        threadCallback = nil
+        threadStreaming = false
+      elseif not activeThread:isRunning() then
+        if threadStreaming then
+          processScanResults()
+        else
+          local ch = love.thread.getChannel("result")
+          local result = ch:pop() or ""
+          local cb = threadCallback
+          loadingScreen = nil
+          activeThread = nil
+          threadCallback = nil
+          threadStreaming = false
+          if cb then cb(result) end
+        end
+      end
+    end
+    return
+  end
+
+  currentMenu:update(dt)
 end
 
 function love.draw()
   backgroundComponent:draw()
   local w, h = love.graphics.getDimensions()
+
+  if loadingScreen then
+    loadingScreen:draw()
+    return
+  end
+
   currentMenu:draw(0, 0, w, h)
 
   local title = state.path[#state.path] or "tiny media center"
@@ -380,6 +508,7 @@ function love.draw()
 end
 
 function love.keypressed(key)
+  if loadingScreen then return end
   if key == "up" then
     currentMenu:navigateUp()
   elseif key == "down" then
@@ -396,6 +525,7 @@ function love.keypressed(key)
 end
 
 function love.mousepressed(x, y, button)
+  if loadingScreen then return end
   if button == 1 then
     currentMenu:navigateIn()
   elseif button == 2 then
@@ -405,6 +535,7 @@ end
 
 local scrollBuffer = 0
 function love.wheelmoved(x, y)
+  if loadingScreen then return end
   if (y > 0) ~= (scrollBuffer > 0) then scrollBuffer = 0 end
   scrollBuffer = scrollBuffer + y
   while scrollBuffer > 30 do
@@ -418,6 +549,7 @@ function love.wheelmoved(x, y)
 end
 
 function love.gamepadpressed(joystick, button)
+  if loadingScreen then return end
   if button == "dpup" then
     currentMenu:navigateUp()
   elseif button == "dpdown" then
