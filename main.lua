@@ -201,7 +201,7 @@ getDirectoryMenuItems = function(path)
 
   local raw_items = {}
   for name, child in pairs(dir --[[@as DirectoryNode]].children) do
-    local displayName = stripExtension(name)
+    local displayName = child.type == "directory" and name or stripExtension(name)
     local item = { label = displayName, target = name, node = child }
     if child.type == "video" then
       local pct = watchPct(child)
