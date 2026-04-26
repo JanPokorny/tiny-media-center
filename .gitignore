@@ -1,0 +1,16 @@
+# LÖVE save directory (if anyone runs from a checkout with a custom save dir)
+/save/
+
+# User config
+config.toml
+
+# Per-video metadata files written next to media
+*.tmc
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+*.code-workspace
