@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build .love
+        run: |
+          zip -9 -r "tiny-media-center-${GITHUB_REF_NAME}.love" . \
+            -x '.git/*' \
+            -x '.github/*' \
+            -x '.vscode/*' \
+            -x '.gitignore' \
+            -x '.luarc.json' \
+            -x 'start'
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tiny-media-center-${{ github.ref_name }}.love
+          generate_release_notes: true
