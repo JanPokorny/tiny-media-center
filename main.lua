@@ -269,7 +269,15 @@ getDirectoryMenuItems = function(path)
     local action = raw_item.action or "browse"
     if action == "play_wii_game" or action == "run_script" then
       raw_item.select = function()
-        local cmd = action == "play_wii_game" and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
+        -- Dolphin segfaults in its threaded GL init when spawned as a child of
+        -- this (LÖVE/SDL) process from a worker thread -- it inherits process
+        -- state (signal mask etc.) that its X11/GLX backend can't cope with,
+        -- though it runs fine from a terminal and mpv survives the same launch.
+        -- Have the systemd user manager spawn it instead, giving a clean
+        -- context (--same-dir keeps relative --exec paths working, --wait
+        -- blocks until the game exits). Fall back to a direct launch where
+        -- systemd-run isn't available.
+        local cmd = action == "play_wii_game" and 'g="%s"; if command -v systemd-run >/dev/null; then systemd-run --user --wait --collect --same-dir dolphin-emu --batch -C Dolphin.Display.Fullscreen=True --exec="$g"; else dolphin-emu --batch -C Dolphin.Display.Fullscreen=True --exec="$g"; fi' or 'bash "%s"'
         local fullCmd = string.format(cmd, config.media_path .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target)
         runBackground(action == "play_wii_game" and "Playing..." or "Running...", string.format([[
           local ch = love.thread.getChannel("result")
