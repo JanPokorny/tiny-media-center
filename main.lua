@@ -544,7 +544,7 @@ function love.keypressed(key)
     currentMenu:navigateIn()
   elseif key == "escape" or key == "appback" or key == "sleep" then
     if currentMenu.navigateOut then currentMenu.navigateOut() end
-  elseif key == "r" then
+  elseif key == "r" and (love.keyboard.isDown("lctrl", "rctrl")) then
     love.event.quit("restart")
   elseif #key == 1 then
     currentMenu:jumpToLetter(key)
