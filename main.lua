@@ -322,7 +322,7 @@ local function buildMediaTree(callback)
     local status = love.thread.getChannel("status")
 
     local children = {}
-    local typeByExt = { mp4 = "video", mkv = "video", avi = "video", mp3 = "video", rvz = "wii_game", sh = "script" }
+    local typeByExt = { mp4 = "video", mkv = "video", avi = "video", mp3 = "video", rvz = "wii_game", wbfs = "wii_game", sh = "script" }
 
     local h = io.popen('cd "' .. mediaPath .. '" && find . -type f 2>/dev/null')
     for line in h:lines() do
