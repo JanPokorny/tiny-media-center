@@ -277,7 +277,7 @@ getDirectoryMenuItems = function(path)
         -- context (--same-dir keeps relative --exec paths working, --wait
         -- blocks until the game exits). Fall back to a direct launch where
         -- systemd-run isn't available.
-        local cmd = action == "play_wii_game" and 'g="%s"; if command -v systemd-run >/dev/null; then systemd-run --user --wait --collect --same-dir dolphin-emu --batch -C Dolphin.Display.Fullscreen=True --exec="$g"; else dolphin-emu --batch -C Dolphin.Display.Fullscreen=True --exec="$g"; fi' or 'bash "%s"'
+        local cmd = action == "play_wii_game" and 'g="%s"; if command -v systemd-run >/dev/null; then systemd-run --user --wait --collect --same-dir dolphin-emu --batch -C Dolphin.Display.Fullscreen=True -C Dolphin.Interface.ConfirmStop=False --exec="$g"; else dolphin-emu --batch -C Dolphin.Display.Fullscreen=True -C Dolphin.Interface.ConfirmStop=False --exec="$g"; fi' or 'bash "%s"'
         local fullCmd = string.format(cmd, config.media_path .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target)
         runBackground(action == "play_wii_game" and "Playing..." or "Running...", string.format([[
           local ch = love.thread.getChannel("result")
