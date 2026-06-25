@@ -269,7 +269,7 @@ getDirectoryMenuItems = function(path)
     local action = raw_item.action or "browse"
     if action == "play_wii_game" or action == "run_script" then
       raw_item.select = function()
-        local cmd = action == "play_wii_game" and 'dolphin-emu --batch --exec="%s"' or 'bash "%s"'
+        local cmd = action == "play_wii_game" and 'dolphin-emu --exec="%s"' or 'bash "%s"'
         local fullCmd = string.format(cmd, config.media_path .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target)
         runBackground(action == "play_wii_game" and "Playing..." or "Running...", string.format([[
           local ch = love.thread.getChannel("result")
