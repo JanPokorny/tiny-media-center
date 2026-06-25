@@ -274,7 +274,7 @@ getDirectoryMenuItems = function(path)
         -- sessions don't always export it, so the wrapper falls back to the
         -- dolphin-emu-x11 binary and segfaults. Set it when WAYLAND_DISPLAY is
         -- present (no-op on X11, where WAYLAND_DISPLAY is empty).
-        local cmd = action == "play_wii_game" and '${WAYLAND_DISPLAY:+XDG_SESSION_TYPE=wayland} dolphin-emu --batch --exec="%s"' or 'bash "%s"'
+        local cmd = action == "play_wii_game" and '${WAYLAND_DISPLAY:+XDG_SESSION_TYPE=wayland} dolphin-emu --batch -C Dolphin.Display.Fullscreen=True --exec="%s"' or 'bash "%s"'
         local fullCmd = string.format(cmd, config.media_path .. "/" .. table.concat(path, "/") .. "/" .. raw_item.target)
         runBackground(action == "play_wii_game" and "Playing..." or "Running...", string.format([[
           local ch = love.thread.getChannel("result")
