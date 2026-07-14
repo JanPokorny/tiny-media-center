@@ -2,7 +2,7 @@
 source ~/.bashrc
 set -euxo pipefail
 cd -- "$( dirname -- "${BASH_SOURCE[0]}" )"
-git pull
+timeout 15 git pull || true
 LOVEDIR=$(pwd)
 cd /media
 exec love "$LOVEDIR"
