@@ -36,12 +36,10 @@ on Arch plain `mpv` suffices) and SDL's
 (SDL3 is compiled from source and statically linked by default; build with
 `--no-default-features` to link a system SDL3 instead).
 
-`scripts/build-release.sh` builds the portable Releases binary in a
-Debian 12 container (docker or podman).
-
 With [mise](https://mise.jdx.dev), `mise install` provides the pinned Rust
 toolchain and `mise tasks` lists the available tasks (`build`, `run`,
-`check`, `release`).
+`check`, and `release`, which builds the portable Releases binary in a
+Debian 12 container — needs docker or podman).
 
 ## credits
 
