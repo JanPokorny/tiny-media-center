@@ -3,6 +3,7 @@ source ~/.bashrc
 set -euxo pipefail
 cd -- "$( dirname -- "${BASH_SOURCE[0]}" )"
 timeout 15 git pull || true
-LOVEDIR=$(pwd)
+cargo build --release
+BIN=$(pwd)/target/release/tiny-media-center
 cd /media
-exec love "$LOVEDIR"
+exec "$BIN"

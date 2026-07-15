@@ -1,0 +1,23 @@
+[package]
+name = "tiny-media-center"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sdl3 = "0.14"
+femtovg = "0.11"
+libmpv2 = { version = "4", features = ["render"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+walkdir = "2"
+fastrand = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[features]
+# Build SDL3 from source instead of linking the system library
+# (for machines/distros without an SDL3 package).
+vendored-sdl = ["sdl3/build-from-source-static"]
+
+[profile.release]
+lto = true
+strip = true
