@@ -14,8 +14,9 @@ fastrand = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [features]
-# Build SDL3 from source instead of linking the system library
-# (for machines/distros without an SDL3 package).
+# SDL3 is statically linked from source by default, since most distros don't
+# package it yet; build with --no-default-features to link a system SDL3.
+default = ["vendored-sdl"]
 vendored-sdl = ["sdl3/build-from-source-static"]
 
 [profile.release]
