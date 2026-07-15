@@ -1,0 +1,23 @@
+# Dev tools and tasks (https://mise.jdx.dev): `mise install`, then e.g.
+# `mise run build`. Native build dependencies still come from the distro:
+# libmpv headers and, for the default from-source SDL3, cmake plus its
+# Linux build dependencies (see README).
+
+[tools]
+rust = { version = "1.94", components = "clippy" }
+
+[tasks.build]
+description = "Build the release binary for this machine"
+run = "cargo build --release"
+
+[tasks.run]
+description = "Build and run in the current directory"
+run = "cargo run --release"
+
+[tasks.check]
+description = "Lint with clippy"
+run = "cargo clippy"
+
+[tasks.release]
+description = "Build the portable Releases binary (Debian 12 container, needs docker/podman)"
+run = "scripts/build-release.sh"
