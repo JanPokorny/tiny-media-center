@@ -67,7 +67,7 @@ impl Node {
 
 pub fn strip_extension(filename: &str) -> &str {
     match filename.rfind('.') {
-        Some(i) if i > 0 => &filename[..i],
+        Some(i) if i > 0 && i + 1 < filename.len() => &filename[..i],
         _ => filename,
     }
 }
