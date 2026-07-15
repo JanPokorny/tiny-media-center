@@ -36,20 +36,22 @@ impl Default for Style {
     }
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub media_path: String,
     pub style: Style,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Config { media_path: ".".into(), style: Style::default() }
+    }
+}
+
 pub fn load() -> Config {
-    let mut config: Config = std::fs::read_to_string(config_dir().join("config.toml"))
+    std::fs::read_to_string(config_dir().join("config.toml"))
         .ok()
         .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default();
-    if config.media_path.is_empty() {
-        config.media_path = ".".into();
-    }
-    config
+        .unwrap_or_default()
 }

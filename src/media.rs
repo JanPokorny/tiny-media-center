@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::mpsc::Sender;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Kind {
+    #[default]
     Directory,
     Video,
     WiiGame,
@@ -45,24 +46,13 @@ fn num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> 
     }))
 }
 
+// A node is named by its key in the parent's children map; the path to it is
+// whatever segments the caller walked to reach it.
+#[derive(Default)]
 pub struct Node {
-    pub name: String,
-    pub path: Vec<String>,
     pub kind: Kind,
     pub children: BTreeMap<String, Node>,
     pub meta: Meta,
-}
-
-impl Node {
-    pub fn root() -> Node {
-        Node {
-            name: String::new(),
-            path: vec![],
-            kind: Kind::Directory,
-            children: BTreeMap::new(),
-            meta: Meta::default(),
-        }
-    }
 }
 
 pub fn strip_extension(filename: &str) -> &str {
@@ -77,32 +67,18 @@ fn tmc_path(media_path: &str, node_path: &[String]) -> String {
     format!("{}/{}.tmc", media_path, strip_extension(&rel))
 }
 
-pub fn save_metadata(media_path: &str, node: &Node) {
-    if let Ok(s) = toml::to_string(&node.meta) {
-        let _ = std::fs::write(tmc_path(media_path, &node.path), s);
+pub fn save_metadata(media_path: &str, node_path: &[String], meta: &Meta) {
+    if let Ok(s) = toml::to_string(meta) {
+        let _ = std::fs::write(tmc_path(media_path, node_path), s);
     }
 }
 
 pub fn get_node<'a>(root: &'a Node, path: &[String]) -> Option<&'a Node> {
-    let mut node = root;
-    for seg in path {
-        if node.kind != Kind::Directory {
-            return None;
-        }
-        node = node.children.get(seg)?;
-    }
-    Some(node)
+    path.iter().try_fold(root, |node, seg| node.children.get(seg))
 }
 
 pub fn get_node_mut<'a>(root: &'a mut Node, path: &[String]) -> Option<&'a mut Node> {
-    let mut node = root;
-    for seg in path {
-        if node.kind != Kind::Directory {
-            return None;
-        }
-        node = node.children.get_mut(seg)?;
-    }
-    Some(node)
+    path.iter().try_fold(root, |node, seg| node.children.get_mut(seg))
 }
 
 // Port of getVideoContext: walks the path and returns the first video node on
@@ -139,13 +115,13 @@ pub enum ScanMsg {
     Done,
 }
 
-fn kind_by_extension(name: &str) -> Option<Kind> {
-    match name.rsplit_once('.')?.1 {
-        "mp4" | "mkv" | "avi" | "mp3" => Some(Kind::Video),
-        "rvz" | "wbfs" => Some(Kind::WiiGame),
-        "sh" => Some(Kind::Script),
-        _ => None,
+pub fn insert(root: &mut Node, parts: Vec<String>, kind: Kind, meta: Meta) {
+    let mut cur = root;
+    for part in &parts[..parts.len() - 1] {
+        cur = cur.children.entry(part.clone()).or_default();
     }
+    let leaf = Node { kind, children: BTreeMap::new(), meta };
+    cur.children.insert(parts.last().unwrap().clone(), leaf);
 }
 
 // Port of buildMediaTree's worker thread: walk the media dir, and for videos
@@ -167,7 +143,12 @@ pub fn spawn_scan(media_path: String, tx: Sender<ScanMsg>) {
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
                 .collect();
-            let Some(kind) = kind_by_extension(&parts[parts.len() - 1]) else { continue };
+            let kind = match parts.last().unwrap().rsplit_once('.').map(|(_, ext)| ext) {
+                Some("mp4" | "mkv" | "avi" | "mp3") => Kind::Video,
+                Some("rvz" | "wbfs") => Kind::WiiGame,
+                Some("sh") => Kind::Script,
+                _ => continue,
+            };
 
             let mut meta = Meta::default();
             if kind == Kind::Video {
@@ -197,43 +178,4 @@ pub fn spawn_scan(media_path: String, tx: Sender<ScanMsg>) {
         }
         let _ = tx.send(ScanMsg::Done);
     });
-}
-
-// Port of processScanResults' tree assembly.
-pub fn insert(root: &mut Node, parts: Vec<String>, kind: Kind, meta: Meta) {
-    let mut cur = root;
-    for i in 0..parts.len() - 1 {
-        let path: Vec<String> = parts[..=i].to_vec();
-        cur = cur
-            .children
-            .entry(parts[i].clone())
-            .or_insert_with(|| Node {
-                name: parts[i].clone(),
-                path,
-                kind: Kind::Directory,
-                children: BTreeMap::new(),
-                meta: Meta::default(),
-            });
-    }
-    let name = parts[parts.len() - 1].clone();
-    cur.children.insert(
-        name.clone(),
-        Node { name, path: parts, kind, children: BTreeMap::new(), meta },
-    );
-}
-
-// The Lua version launched Dolphin through the systemd user manager; see the
-// comment there (kept in the PR description). Preserved as-is.
-pub fn external_command(media_path: &str, node_path: &[String], kind: Kind) -> String {
-    let full = format!("{}/{}", media_path, node_path.join("/"));
-    match kind {
-        Kind::WiiGame => format!(
-            r#"g="{full}"; if command -v systemd-run >/dev/null; then systemd-run --user --wait --collect --same-dir dolphin-emu --batch -C Dolphin.Display.Fullscreen=True -C Dolphin.Interface.ConfirmStop=False --exec="$g"; else dolphin-emu --batch -C Dolphin.Display.Fullscreen=True -C Dolphin.Interface.ConfirmStop=False --exec="$g"; fi"#
-        ),
-        _ => format!(r#"bash "{full}""#),
-    }
-}
-
-pub fn media_file(media_path: &str, node_path: &[String]) -> String {
-    format!("{}/{}", media_path, node_path.join("/"))
 }

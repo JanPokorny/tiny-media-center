@@ -144,7 +144,7 @@ pub fn probe(mpv: &mut Option<Mpv>, file: &str) -> Option<(f64, BTreeMap<String,
     let mpv = mpv.as_mut()?;
     command(mpv, "loadfile", &[file]).ok()?;
     loop {
-        match mpv.event_context_mut().wait_event(30.0)? .ok()? {
+        match mpv.event_context_mut().wait_event(30.0)?.ok()? {
             Event::FileLoaded => break,
             Event::EndFile(_) | Event::Shutdown => return None,
             _ => {}
