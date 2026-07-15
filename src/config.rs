@@ -2,6 +2,17 @@
 // falling back to defaults for anything missing or unparsable.
 
 use serde::Deserialize;
+use std::path::PathBuf;
+
+pub fn color(rgb: [f32; 3], alpha: f32) -> femtovg::Color {
+    femtovg::Color::rgbaf(rgb[0], rgb[1], rgb[2], alpha)
+}
+
+pub fn config_dir() -> PathBuf {
+    let config_home = std::env::var("XDG_CONFIG_HOME")
+        .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
+    PathBuf::from(config_home).join("tiny-media-center")
+}
 
 #[derive(Deserialize)]
 #[serde(default)]
@@ -33,9 +44,7 @@ pub struct Config {
 }
 
 pub fn load() -> Config {
-    let config_home = std::env::var("XDG_CONFIG_HOME")
-        .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
-    let mut config: Config = std::fs::read_to_string(format!("{config_home}/tiny-media-center/config.toml"))
+    let mut config: Config = std::fs::read_to_string(config_dir().join("config.toml"))
         .ok()
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default();

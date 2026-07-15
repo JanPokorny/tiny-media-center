@@ -9,11 +9,13 @@ mod menu;
 mod player;
 
 use background::Background;
-use femtovg::{renderer::OpenGl, Baseline, Canvas, Color, FontId, Paint};
-use media::{Kind, Node, ScanMsg};
+use config::color;
+use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, Paint, Path};
+use media::{Kind, Meta, Node, ScanMsg};
 use menu::{Menu, MenuItem};
-use player::{Player, PlayerEvent};
+use player::Player;
 use sdl3::event::Event;
+use sdl3::gamepad::Button;
 use sdl3::keyboard::{Keycode, Mod};
 use sdl3::mouse::MouseButton;
 use std::sync::mpsc::{channel, Receiver};
@@ -43,7 +45,7 @@ enum Action {
 }
 
 enum Task {
-    Scan { rx: Receiver<ScanMsg>, entries: Vec<(Vec<String>, Kind, media::Meta)> },
+    Scan { rx: Receiver<ScanMsg>, entries: Vec<(Vec<String>, Kind, Meta)> },
     External(Receiver<()>),
 }
 
@@ -77,7 +79,7 @@ impl App {
     // Port of getDirectoryMenuItems' item construction + sort: in-progress
     // videos first, then unwatched, then watched (dimmed), alphabetical
     // within each group.
-    fn directory_items(&self, node: &Node) -> Vec<MenuItem<Action>> {
+    fn directory_items(node: &Node) -> Vec<MenuItem<Action>> {
         let mut raw: Vec<(i32, String, bool, String)> = node
             .children
             .values()
@@ -180,22 +182,21 @@ impl App {
 
     fn navigate_in(&mut self) {
         let Some(action) = self.current_menu().selected_action().cloned() else { return };
-        let (line_h, screen_h) = (self.line_h(), self.screen.1);
         match action {
             Action::Open(name) => {
                 let mut child_path = self.path.clone();
-                child_path.push(name.clone());
+                child_path.push(name);
                 let Some(child) = media::get_node(&self.tree, &child_path) else { return };
                 match child.kind {
                     Kind::Directory => {
-                        let items = self.directory_items(child);
+                        let menu = Menu::new(Self::directory_items(child), 0);
                         self.path = child_path;
-                        self.push_menu(items);
+                        self.menus.push(menu);
                     }
                     Kind::Video => {
-                        let items = Self::video_items(child);
+                        let menu = Menu::new(Self::video_items(child), 0);
                         self.path = child_path;
-                        self.push_menu(items);
+                        self.menus.push(menu);
                     }
                     Kind::WiiGame | Kind::Script => self.run_external(&child_path, child.kind),
                 }
@@ -203,13 +204,13 @@ impl App {
             Action::Play => self.play(),
             Action::Tracks(kind) => {
                 let Some(node) = media::get_node(&self.tree, &self.path) else { return };
-                let items = Self::track_items(node, kind);
+                let menu = Menu::new(Self::track_items(node, kind), 0);
                 self.path.push(format!(":{}", kind.as_str()));
-                self.push_menu(items);
+                self.menus.push(menu);
             }
             Action::SelectTrack(kind, id) => {
-                let video_path = self.path[..self.path.len() - 1].to_vec();
-                let Some(video) = media::get_node_mut(&mut self.tree, &video_path) else { return };
+                let video_path = &self.path[..self.path.len() - 1];
+                let Some(video) = media::get_node_mut(&mut self.tree, video_path) else { return };
                 match kind {
                     TrackKind::Audio => video.meta.aid = Some(id),
                     TrackKind::Sub => video.meta.sid = Some(id),
@@ -219,36 +220,27 @@ impl App {
                 let selected = if kind == TrackKind::Audio { 1 } else { 2 };
                 self.path.pop();
                 self.menus.pop();
-                self.current_menu().set_items(items, selected, line_h, screen_h);
+                self.current_menu().set_items(items, selected);
             }
         }
     }
 
-    fn push_menu(&mut self, items: Vec<MenuItem<Action>>) {
-        let (line_h, screen_h) = (self.line_h(), self.screen.1);
-        let mut menu = Menu::new(items, 0);
-        menu.reset_scroll(line_h, screen_h);
-        self.menus.push(menu);
-    }
-
     fn navigate_out(&mut self) {
-        let (line_h, screen_h) = (self.line_h(), self.screen.1);
         if self.menus.len() > 1 {
             self.menus.pop();
             self.path.pop();
-            self.current_menu().reset_scroll(line_h, screen_h);
+            self.current_menu().reset_scroll();
         }
     }
 
     fn playback_ended(&mut self) {
-        let (line_h, screen_h) = (self.line_h(), self.screen.1);
         let position = self.player.time_pos;
         let media_path = self.config.media_path.clone();
         if let Some(node) = media::get_node_mut(&mut self.tree, &self.path) {
             node.meta.position = Some(position);
             media::save_metadata(&media_path, node);
             let items = Self::video_items(node);
-            self.current_menu().set_items(items, 0, line_h, screen_h);
+            self.current_menu().set_items(items, 0);
         }
         self.mode = Mode::Browse;
     }
@@ -277,16 +269,12 @@ impl App {
                     }
                 }
                 if finished {
-                    let entries = std::mem::take(entries);
                     self.tree = Node::root();
-                    for (parts, kind, meta) in entries {
+                    for (parts, kind, meta) in std::mem::take(entries) {
                         media::insert(&mut self.tree, parts, kind, meta);
                     }
                     let dir = media::get_node(&self.tree, &self.path).unwrap_or(&self.tree);
-                    let items = self.directory_items(dir);
-                    let (line_h, screen_h) = (self.line_h(), self.screen.1);
-                    self.menus = vec![Menu::new(items, 0)];
-                    self.current_menu().reset_scroll(line_h, screen_h);
+                    self.menus = vec![Menu::new(Self::directory_items(dir), 0)];
                 }
             }
             Task::External(rx) => finished = rx.try_recv().is_ok(),
@@ -297,24 +285,20 @@ impl App {
     }
 }
 
-fn style_color(rgb: [f32; 3], alpha: f32) -> Color {
-    Color::rgbaf(rgb[0], rgb[1], rgb[2], alpha)
-}
-
 // Port of the love.draw browse branch: menu + title + watch progress bar +
 // remaining-time line.
 fn draw_browse(app: &mut App, canvas: &mut Canvas<OpenGl>, font: FontId, dt: f32) {
     let (w, h) = app.screen;
-    let paint = Paint::color(Color::white())
-        .with_font(&[font])
-        .with_font_size(app.config.style.font_size)
-        .with_text_baseline(Baseline::Top);
 
     app.background.draw(canvas, h);
     if let Some(menu) = app.menus.last_mut() {
         menu.draw(canvas, font, &app.config, dt, w, h);
     }
-    let config = &app.config;
+    let style = &app.config.style;
+    let dim_paint = Paint::color(color(style.dim_color, 1.0))
+        .with_font(&[font])
+        .with_font_size(style.font_size)
+        .with_text_baseline(Baseline::Top);
 
     let title = app.path.last().map(|s| s.as_str()).unwrap_or("tiny media center");
     let title = title.strip_prefix(':').unwrap_or(title);
@@ -324,20 +308,19 @@ fn draw_browse(app: &mut App, canvas: &mut Canvas<OpenGl>, font: FontId, dt: f32
     } else {
         title
     };
-    let dim_paint = paint.clone().with_color(style_color(config.style.dim_color, 1.0));
     let _ = canvas.fill_text(0.0, 0.0, display_title, &dim_paint);
 
     if let Some(video) = media::video_context(&app.tree, &app.path) {
         let pct = media::watch_pct(video);
         let bar_height = 4.0;
 
-        let mut bar = femtovg::Path::new();
+        let mut bar = Path::new();
         bar.rect(0.0, h - bar_height, w, bar_height);
-        canvas.fill_path(&bar, &Paint::color(style_color(config.style.text_color, 0.2)));
+        canvas.fill_path(&bar, &Paint::color(color(style.text_color, 0.2)));
         if pct > 0 {
-            let mut fill = femtovg::Path::new();
+            let mut fill = Path::new();
             fill.rect(0.0, h - bar_height, w * pct as f32 / 100.0, bar_height);
-            canvas.fill_path(&fill, &Paint::color(style_color(config.style.accent_color, 1.0)));
+            canvas.fill_path(&fill, &Paint::color(color(style.accent_color, 1.0)));
         }
 
         if let Some(duration) = video.meta.duration {
@@ -356,7 +339,7 @@ fn draw_browse(app: &mut App, canvas: &mut Canvas<OpenGl>, font: FontId, dt: f32
             let text_w = canvas.measure_text(0.0, 0.0, &time_text, &dim_paint).map_or(0.0, |m| m.width());
             let _ = canvas.fill_text(
                 (w - text_w) / 2.0,
-                h - bar_height - config.style.font_size * 1.2,
+                h - bar_height - style.font_size * 1.2,
                 &time_text,
                 &dim_paint,
             );
@@ -367,7 +350,7 @@ fn draw_browse(app: &mut App, canvas: &mut Canvas<OpenGl>, font: FontId, dt: f32
 // Write the embedded mpv attachment files to the config dir (port of the
 // love.filesystem save-directory copy in love.load).
 fn write_mpv_attachments() -> String {
-    let dir = media::config_dir().join("mpv");
+    let dir = config::config_dir().join("mpv");
     let _ = std::fs::create_dir_all(&dir);
     let files: [(&str, &[u8]); 3] = [
         ("mpv.conf", include_bytes!("../attachments/mpv/mpv.conf")),
@@ -385,13 +368,6 @@ fn restart() -> ! {
     let exe = std::env::current_exe().expect("current_exe");
     let err = std::process::Command::new(exe).exec();
     panic!("restart failed: {err}");
-}
-
-fn get_proc_address_ptr(video: &sdl3::VideoSubsystem, name: &str) -> *const std::ffi::c_void {
-    match video.gl_get_proc_address(name) {
-        Some(f) => f as *const std::ffi::c_void,
-        None => std::ptr::null(),
-    }
 }
 
 fn main() {
@@ -412,7 +388,8 @@ fn main() {
     sdl.mouse().show_cursor(false);
 
     let renderer = unsafe {
-        OpenGl::new_from_function(|s| get_proc_address_ptr(&video, s)).expect("femtovg renderer")
+        OpenGl::new_from_function(|s| player::get_proc_address(&video, s).cast_const())
+            .expect("femtovg renderer")
     };
     let mut canvas = Canvas::new(renderer).expect("femtovg canvas");
     let font = canvas
@@ -451,34 +428,34 @@ fn main() {
                         gamepads.push(gamepad);
                     }
                 }
+                Event::KeyDown { keycode: Some(Keycode::R), keymod, .. }
+                    if keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) =>
+                {
+                    restart()
+                }
                 _ if loading => {}
-                Event::KeyDown { keycode: Some(key), keymod, .. } if playing => match key {
+                Event::KeyDown { keycode: Some(key), .. } if playing => match key {
                     Keycode::Escape | Keycode::AcBack => app.player.stop(),
                     Keycode::Left => app.player.seek(-5.0),
                     Keycode::Right => app.player.seek(5.0),
                     Keycode::Return => app.player.toggle_pause(),
                     Keycode::Up => app.player.add_sub_delay(-0.5),
                     Keycode::Down => app.player.add_sub_delay(0.5),
-                    Keycode::R if keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) => restart(),
                     _ => {}
                 },
-                Event::ControllerButtonDown { button, .. } if playing => {
-                    use sdl3::gamepad::Button;
-                    match button {
-                        Button::East => app.player.stop(),
-                        Button::South => app.player.toggle_pause(),
-                        Button::DPadLeft => app.player.seek(-5.0),
-                        Button::DPadRight => app.player.seek(5.0),
-                        _ => {}
-                    }
-                }
+                Event::ControllerButtonDown { button, .. } if playing => match button {
+                    Button::East => app.player.stop(),
+                    Button::South => app.player.toggle_pause(),
+                    Button::DPadLeft => app.player.seek(-5.0),
+                    Button::DPadRight => app.player.seek(5.0),
+                    _ => {}
+                },
                 _ if playing => {}
-                Event::KeyDown { keycode: Some(key), keymod, .. } => match key {
+                Event::KeyDown { keycode: Some(key), .. } => match key {
                     Keycode::Up => app.current_menu().navigate_up(),
                     Keycode::Down => app.current_menu().navigate_down(),
                     Keycode::Return => app.navigate_in(),
                     Keycode::Escape | Keycode::AcBack | Keycode::Sleep => app.navigate_out(),
-                    Keycode::R if keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD) => restart(),
                     key => {
                         let name = key.name().to_lowercase();
                         let mut chars = name.chars();
@@ -503,16 +480,13 @@ fn main() {
                         app.scroll_buffer += 30.0;
                     }
                 }
-                Event::ControllerButtonDown { button, .. } => {
-                    use sdl3::gamepad::Button;
-                    match button {
-                        Button::DPadUp => app.current_menu().navigate_up(),
-                        Button::DPadDown => app.current_menu().navigate_down(),
-                        Button::South => app.navigate_in(),
-                        Button::East => app.navigate_out(),
-                        _ => {}
-                    }
-                }
+                Event::ControllerButtonDown { button, .. } => match button {
+                    Button::DPadUp => app.current_menu().navigate_up(),
+                    Button::DPadDown => app.current_menu().navigate_down(),
+                    Button::South => app.navigate_in(),
+                    Button::East => app.navigate_out(),
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -524,7 +498,7 @@ fn main() {
 
         match &app.mode {
             Mode::Playing => {
-                if let PlayerEvent::Ended = app.player.poll() {
+                if app.player.poll_ended() {
                     app.playback_ended();
                 } else {
                     app.player.render(w as i32, h as i32);
@@ -540,12 +514,10 @@ fn main() {
         }
 
         canvas.set_size(w, h, 1.0);
-        let bg = app.config.style.background_color;
-        canvas.clear_rect(0, 0, w, h, Color::rgbf(bg[0], bg[1], bg[2]));
+        canvas.clear_rect(0, 0, w, h, color(app.config.style.background_color, 1.0));
 
         if let Mode::Loading { text, subtext, .. } = &app.mode {
-            let (text, subtext) = (text.clone(), subtext.clone());
-            loading::draw(&mut canvas, font, &app.config, &text, &subtext, w as f32, h as f32);
+            loading::draw(&mut canvas, font, &app.config, text, subtext, w as f32, h as f32);
         } else {
             app.background.update(dt, w as f32, h as f32);
             let (line_h, screen_h) = (app.line_h(), app.screen.1);

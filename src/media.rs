@@ -4,7 +4,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::mpsc::Sender;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -237,10 +236,4 @@ pub fn external_command(media_path: &str, node_path: &[String], kind: Kind) -> S
 
 pub fn media_file(media_path: &str, node_path: &[String]) -> String {
     format!("{}/{}", media_path, node_path.join("/"))
-}
-
-pub fn config_dir() -> std::path::PathBuf {
-    let config_home = std::env::var("XDG_CONFIG_HOME")
-        .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
-    Path::new(&config_home).join("tiny-media-center")
 }

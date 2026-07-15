@@ -3,8 +3,8 @@
 // (evaluated at the item's center), which reads identically at these fade
 // band sizes.
 
-use crate::config::Config;
-use femtovg::{Canvas, Color, FontId, Paint, Renderer};
+use crate::config::{color, Config};
+use femtovg::{Baseline, Canvas, Color, FontId, Paint, Renderer};
 
 pub struct MenuItem<A> {
     pub label: String,
@@ -22,16 +22,16 @@ impl<A> MenuItem<A> {
 pub struct Menu<A> {
     pub items: Vec<MenuItem<A>>,
     pub selected: usize,
+    // NAN marks a pending reset_scroll, resolved on the next update once
+    // layout (line height, screen height) is at hand.
     scroll_offset: f32,
-}
-
-fn color(rgb: [f32; 3], alpha: f32) -> Color {
-    Color::rgbaf(rgb[0], rgb[1], rgb[2], alpha)
 }
 
 impl<A> Menu<A> {
     pub fn new(items: Vec<MenuItem<A>>, selected: usize) -> Menu<A> {
-        Menu { items, selected, scroll_offset: 0.0 }
+        let mut menu = Menu { items, selected, scroll_offset: 0.0 };
+        menu.reset_scroll();
+        menu
     }
 
     fn target_offset(&self, line_h: f32, screen_h: f32) -> f32 {
@@ -43,18 +43,21 @@ impl<A> Menu<A> {
         }
     }
 
-    pub fn reset_scroll(&mut self, line_h: f32, screen_h: f32) {
-        self.scroll_offset = self.target_offset(line_h, screen_h) - line_h * 0.5;
+    pub fn reset_scroll(&mut self) {
+        self.scroll_offset = f32::NAN;
     }
 
-    pub fn set_items(&mut self, items: Vec<MenuItem<A>>, selected: usize, line_h: f32, screen_h: f32) {
+    pub fn set_items(&mut self, items: Vec<MenuItem<A>>, selected: usize) {
         self.items = items;
         self.selected = selected;
-        self.reset_scroll(line_h, screen_h);
+        self.reset_scroll();
     }
 
     pub fn update(&mut self, dt: f32, line_h: f32, screen_h: f32) {
         let target = self.target_offset(line_h, screen_h);
+        if self.scroll_offset.is_nan() {
+            self.scroll_offset = target - line_h * 0.5;
+        }
         self.scroll_offset += (target - self.scroll_offset) * 10.0 * dt;
     }
 
@@ -88,13 +91,7 @@ impl<A> Menu<A> {
     fn fade_alpha(y: f32, header_h: f32, screen_h: f32) -> f32 {
         let fade_top = screen_h * 0.3 - header_h;
         let fade_bot = screen_h * 0.3;
-        let mut alpha = if y < header_h {
-            0.0
-        } else if y < header_h + fade_top {
-            (y - header_h) / fade_top
-        } else {
-            1.0
-        };
+        let mut alpha = ((y - header_h) / fade_top).min(1.0);
         if y > screen_h - fade_bot {
             alpha = alpha.min((screen_h - y) / fade_bot);
         }
@@ -115,12 +112,12 @@ impl<A> Menu<A> {
         let paint = Paint::color(Color::white())
             .with_font(&[font])
             .with_font_size(config.style.font_size)
-            .with_text_baseline(femtovg::Baseline::Top);
+            .with_text_baseline(Baseline::Top);
 
         let selected = self.selected;
         for (i, item) in self.items.iter_mut().enumerate() {
             let item_y = h / 2.0 - self.scroll_offset + i as f32 * line_h;
-            if item_y <= -line_h || item_y >= h {
+            if item_y <= -line_h || item_y >= h || item_y.is_nan() {
                 continue;
             }
             let focused = i == selected;

@@ -23,7 +23,7 @@ fn command(mpv: &Mpv, name: &str, args: &[&str]) -> Result<(), libmpv2::Error> {
     mpv.command(name, &quoted)
 }
 
-fn get_proc_address(video: &VideoSubsystem, name: &str) -> *mut c_void {
+pub fn get_proc_address(video: &VideoSubsystem, name: &str) -> *mut c_void {
     match video.gl_get_proc_address(name) {
         Some(f) => f as *mut c_void,
         None => std::ptr::null_mut(),
@@ -34,11 +34,6 @@ pub struct Player {
     render: RenderContext, // declared before mpv: must be freed first
     pub mpv: Mpv,
     pub time_pos: f64,
-}
-
-pub enum PlayerEvent {
-    Ended,
-    None,
 }
 
 impl Player {
@@ -113,8 +108,8 @@ impl Player {
         let _ = command(&self.mpv, "add", &["sub-delay", &secs.to_string()]);
     }
 
-    // Track playback position and report end of playback.
-    pub fn poll(&mut self) -> PlayerEvent {
+    // Track playback position; true once playback has ended.
+    pub fn poll_ended(&mut self) -> bool {
         if let Ok(pos) = self.mpv.get_property::<f64>("time-pos") {
             self.time_pos = pos;
         }
@@ -124,11 +119,7 @@ impl Player {
                 ended = true;
             }
         }
-        if ended {
-            PlayerEvent::Ended
-        } else {
-            PlayerEvent::None
-        }
+        ended
     }
 
     pub fn render(&self, w: i32, h: i32) {
