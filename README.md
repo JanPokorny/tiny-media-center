@@ -49,14 +49,15 @@ on Arch plain `mpv` suffices) and SDL's
 
 With [mise](https://mise.jdx.dev), `mise install` provides the pinned Rust
 toolchain and `mise tasks` lists the available tasks (`build`, `run`,
-`check`, and `release`, which builds the portable Releases binary in a
-Debian 12 container — needs docker or podman).
+`check`, `build-portable`, and `release`).
 
 ## release
 
-Pushing a `v*` tag runs the [release workflow](.github/workflows/release.yml),
-which builds the portable x86_64 binary (same recipe as the mise `release`
-task), attaches it to a GitHub Release, and triggers a rebuild of the
+`mise run release X.Y.Z` bumps the version in Cargo.toml, commits, and
+pushes a `v*` tag. The tag runs the
+[release workflow](.github/workflows/release.yml), which builds the
+portable x86_64 binary (same recipe as the mise `build-portable` task),
+attaches it to a GitHub Release, and triggers a rebuild of the
 [Copr repository](https://copr.fedorainfracloud.org/coprs/janpokorny/tiny-media-center/)
 from [tiny-media-center.spec](tiny-media-center.spec) (via
 [.copr/Makefile](.copr/Makefile), which vendors the Rust dependencies at
@@ -65,4 +66,8 @@ one.
 
 ## credits
 
-`subfont.ttf` = Kode Mono Regular from Google Fonts
+`subfont.ttf` = Kode Mono Regular from Google Fonts (SIL OFL 1.1)
+
+## license
+
+[GPL-2.0-or-later](LICENSE) (the embedded mpv player is GPL)

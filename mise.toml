@@ -19,11 +19,35 @@ description = "Lint with clippy"
 run = "cargo clippy"
 
 [tasks.release]
-description = "Build the portable Releases binary (Debian 12 container, needs docker/podman)"
+description = "Release: bump version, commit, tag and push (usage: mise run release 0.2.0)"
 shell = "bash -c"
 run = '''
-# Builds the binary for GitHub Releases: SDL3 and all Rust deps statically
-# linked, glibc and libmpv dynamic. The Debian 12 container pins the two
+# Cuts a release: the pushed v* tag makes GitHub Actions build the portable
+# binary, attach it to a GitHub Release, and trigger the Copr rebuild.
+set -euo pipefail
+
+version="{{arg(name="version")}}"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+    { echo "usage: mise run release X.Y.Z" >&2; exit 1; }
+[ "$(git branch --show-current)" = main ] ||
+    { echo "releases are cut from main (Copr builds the tip of main)" >&2; exit 1; }
+git diff --quiet && git diff --cached --quiet ||
+    { echo "working tree is not clean" >&2; exit 1; }
+
+sed -i "s/^version = \".*\"/version = \"$version\"/" Cargo.toml
+cargo update --workspace  # sync the version into Cargo.lock
+git commit -am "Release $version"
+git tag "v$version"
+git push origin main "v$version"
+'''
+
+[tasks.build-portable]
+description = "Build the portable Releases binary locally (Debian 12 container, needs docker/podman)"
+shell = "bash -c"
+run = '''
+# Builds the same portable binary that the release workflow publishes to
+# GitHub Releases (useful to reproduce it locally): SDL3 and all Rust deps
+# statically linked, glibc and libmpv dynamic. The Debian 12 container pins the two
 # runtime requirements as low as practical while still linking the current
 # libmpv ABI (libmpv.so.2, mpv >= 0.35): the result runs on any x86_64
 # distro with glibc >= 2.36 (Debian 12 / Ubuntu 23.04 / Fedora 37 or newer)
