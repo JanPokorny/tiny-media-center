@@ -40,7 +40,9 @@ choice=$(gum choose --header "Release (current version: $current)" \
     "major  $((major + 1)).0.0")
 version=${choice##* }
 
-sed -i "s/^version = \".*\"/version = \"$version\"/" Cargo.toml
+# -i.bak (with the backup removed) works with both GNU and BSD/macOS sed
+sed -i.bak "s/^version = \".*\"/version = \"$version\"/" Cargo.toml
+rm -f Cargo.toml.bak
 cargo update --workspace  # sync the version into Cargo.lock
 git commit -am "Release $version"
 git tag "v$version"
