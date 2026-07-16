@@ -5,6 +5,7 @@
 
 [tools]
 rust = { version = "1.94", components = "clippy" }
+gum = "latest"
 
 [tasks.build]
 description = "Build the release binary for this machine"
@@ -19,11 +20,40 @@ description = "Lint with clippy"
 run = "cargo clippy"
 
 [tasks.release]
-description = "Build the portable Releases binary (Debian 12 container, needs docker/podman)"
+description = "Release: pick a version bump, then commit, tag and push"
 shell = "bash -c"
 run = '''
-# Builds the binary for GitHub Releases: SDL3 and all Rust deps statically
-# linked, glibc and libmpv dynamic. The Debian 12 container pins the two
+# Cuts a release: the pushed v* tag makes GitHub Actions build the portable
+# binary, attach it to a GitHub Release, and trigger the Copr rebuild.
+set -euo pipefail
+
+[ "$(git branch --show-current)" = main ] ||
+    { echo "releases are cut from main (Copr builds the tip of main)" >&2; exit 1; }
+git diff --quiet && git diff --cached --quiet ||
+    { echo "working tree is not clean" >&2; exit 1; }
+
+current=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+IFS=. read -r major minor patch <<<"$current"
+choice=$(gum choose --header "Release (current version: $current)" \
+    "patch  $major.$minor.$((patch + 1))" \
+    "minor  $major.$((minor + 1)).0" \
+    "major  $((major + 1)).0.0")
+version=${choice##* }
+
+sed -i "s/^version = \".*\"/version = \"$version\"/" Cargo.toml
+cargo update --workspace  # sync the version into Cargo.lock
+git commit -am "Release $version"
+git tag "v$version"
+git push origin main "v$version"
+'''
+
+[tasks.build-portable]
+description = "Build the portable Releases binary locally (Debian 12 container, needs docker/podman)"
+shell = "bash -c"
+run = '''
+# Builds the same portable binary that the release workflow publishes to
+# GitHub Releases (useful to reproduce it locally): SDL3 and all Rust deps
+# statically linked, glibc and libmpv dynamic. The Debian 12 container pins the two
 # runtime requirements as low as practical while still linking the current
 # libmpv ABI (libmpv.so.2, mpv >= 0.35): the result runs on any x86_64
 # distro with glibc >= 2.36 (Debian 12 / Ubuntu 23.04 / Fedora 37 or newer)

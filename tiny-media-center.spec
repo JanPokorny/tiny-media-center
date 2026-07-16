@@ -13,9 +13,7 @@ Version:        0.1.0
 Release:        1.%{snapdate}git%{shortcommit}%{?dist}
 Summary:        Tiny fullscreen media center for keyboard/remote/gamepad use
 
-# TODO: the repository does not ship a license file yet; update this tag
-# (and add a LICENSE file) once one is chosen.
-License:        LicenseRef-NotYetLicensed
+License:        GPL-2.0-or-later
 URL:            https://github.com/JanPokorny/tiny-media-center
 Source0:        %{name}-%{version}.tar.gz
 Source1:        %{name}-%{version}-vendor.tar.xz
@@ -48,6 +46,7 @@ install -Dpm0755 target/rpm/%{name} %{buildroot}%{_bindir}/%{name}
 
 %files
 %{_bindir}/%{name}
+%license LICENSE
 %license cargo-vendor.txt
 %doc README.md
 
