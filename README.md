@@ -7,11 +7,22 @@ scripts. Written in Rust on SDL3 + femtovg + libmpv.
 
 ## run
 
+On Fedora 44+, install from
+[Copr](https://copr.fedorainfracloud.org/coprs/janpokorny/tiny-media-center/):
+
+```sh
+sudo dnf copr enable janpokorny/tiny-media-center
+sudo dnf install tiny-media-center
+```
+
+On other distros:
+
 1. install mpv 0.35+ from your distro (`pacman -S mpv` / `apt install libmpv2`)
 2. download `tiny-media-center` from
    [Releases](https://github.com/JanPokorny/tiny-media-center/releases)
    (x86_64, needs glibc 2.36+ — Debian 12 / Ubuntu 23.04 / Fedora 37 or newer)
-3. run it in your media directory
+
+Then run it in your media directory.
 
 ## configure
 
@@ -40,6 +51,17 @@ With [mise](https://mise.jdx.dev), `mise install` provides the pinned Rust
 toolchain and `mise tasks` lists the available tasks (`build`, `run`,
 `check`, and `release`, which builds the portable Releases binary in a
 Debian 12 container — needs docker or podman).
+
+## release
+
+Pushing a `v*` tag runs the [release workflow](.github/workflows/release.yml),
+which builds the portable x86_64 binary (same recipe as the mise `release`
+task) and attaches it to a GitHub Release. The
+[Copr repository](https://copr.fedorainfracloud.org/coprs/janpokorny/tiny-media-center/)
+rebuilds [tiny-media-center.spec](tiny-media-center.spec) on every push to
+`main` (via [.copr/Makefile](.copr/Makefile), which vendors the Rust
+dependencies at SRPM time), linking Fedora's system SDL3 instead of the
+vendored static one.
 
 ## credits
 
