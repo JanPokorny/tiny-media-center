@@ -33,7 +33,8 @@ srpm:
 	snapdate=$$(git log -1 --format=%cd --date=format:%Y%m%d%H%M) && \
 	sha=$$(git rev-parse --short HEAD) && \
 	test -n "$$snapdate" && test -n "$$sha" && \
-	sed -e "s/^%define snapdate .*/%define snapdate $$snapdate/" \
+	sed -e "s/^Version:.*/Version:        $(VERSION)/" \
+	    -e "s/^%define snapdate .*/%define snapdate $$snapdate/" \
 	    -e "s/^%define shortcommit .*/%define shortcommit $$sha/" \
 	    "$(SPECFILE)" > "$(outdir)/$(SPECFILE)" && \
 	rpmbuild -bs "$(outdir)/$(SPECFILE)" \
