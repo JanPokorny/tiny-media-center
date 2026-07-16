@@ -56,12 +56,12 @@ Debian 12 container — needs docker or podman).
 
 Pushing a `v*` tag runs the [release workflow](.github/workflows/release.yml),
 which builds the portable x86_64 binary (same recipe as the mise `release`
-task) and attaches it to a GitHub Release. The
+task), attaches it to a GitHub Release, and triggers a rebuild of the
 [Copr repository](https://copr.fedorainfracloud.org/coprs/janpokorny/tiny-media-center/)
-rebuilds [tiny-media-center.spec](tiny-media-center.spec) on every push to
-`main` (via [.copr/Makefile](.copr/Makefile), which vendors the Rust
-dependencies at SRPM time), linking Fedora's system SDL3 instead of the
-vendored static one.
+from [tiny-media-center.spec](tiny-media-center.spec) (via
+[.copr/Makefile](.copr/Makefile), which vendors the Rust dependencies at
+SRPM time), linking Fedora's system SDL3 instead of the vendored static
+one.
 
 ## credits
 

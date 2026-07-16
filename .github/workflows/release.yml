@@ -79,3 +79,18 @@ jobs:
         with:
           files: target/release/tiny-media-center
           generate_release_notes: true
+
+      # Copr rebuilds only on release, not on every push: the COPR_WEBHOOK_URL
+      # repository secret holds the package's "custom webhook" URL from the
+      # Copr project's Settings -> Integrations page. Copr clones the default
+      # branch at trigger time, so tags should be cut from the tip of main.
+      - name: Trigger Copr rebuild
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
+        run: |
+          if [ -z "$COPR_WEBHOOK_URL" ]; then
+              echo "COPR_WEBHOOK_URL secret not set; skipping Copr trigger"
+              exit 0
+          fi
+          curl -fsS -X POST "$COPR_WEBHOOK_URL"
