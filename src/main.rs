@@ -248,6 +248,10 @@ fn main() {
 
     let sdl = sdl3::init().unwrap();
     let video = sdl.video().unwrap();
+    // femtovg fills concave paths (e.g. the starfield dots) via the stencil
+    // buffer; without one the fill floods the path's bounding box, tinting
+    // the whole background. SDL defaults to no stencil bits.
+    video.gl_attr().set_stencil_size(8);
     let gamepad_subsystem = sdl.gamepad().unwrap();
     let window = video
         .window("tiny media center", 1920, 1080)
