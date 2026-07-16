@@ -7,7 +7,7 @@ scripts. Written in Rust on SDL3 + femtovg + libmpv.
 
 ## run
 
-On Fedora 44+, install from
+On Fedora 43+, install from
 [Copr](https://copr.fedorainfracloud.org/coprs/janpokorny/tiny-media-center/):
 
 ```sh
