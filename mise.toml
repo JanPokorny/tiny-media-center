@@ -5,6 +5,7 @@
 
 [tools]
 rust = { version = "1.94", components = "clippy" }
+gum = "latest"
 
 [tasks.build]
 description = "Build the release binary for this machine"
@@ -19,20 +20,25 @@ description = "Lint with clippy"
 run = "cargo clippy"
 
 [tasks.release]
-description = "Release: bump version, commit, tag and push (usage: mise run release 0.2.0)"
+description = "Release: pick a version bump, then commit, tag and push"
 shell = "bash -c"
 run = '''
 # Cuts a release: the pushed v* tag makes GitHub Actions build the portable
 # binary, attach it to a GitHub Release, and trigger the Copr rebuild.
 set -euo pipefail
 
-version="{{arg(name="version")}}"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-    { echo "usage: mise run release X.Y.Z" >&2; exit 1; }
 [ "$(git branch --show-current)" = main ] ||
     { echo "releases are cut from main (Copr builds the tip of main)" >&2; exit 1; }
 git diff --quiet && git diff --cached --quiet ||
     { echo "working tree is not clean" >&2; exit 1; }
+
+current=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+IFS=. read -r major minor patch <<<"$current"
+choice=$(gum choose --header "Release (current version: $current)" \
+    "patch  $major.$minor.$((patch + 1))" \
+    "minor  $major.$((minor + 1)).0" \
+    "major  $((major + 1)).0.0")
+version=${choice##* }
 
 sed -i "s/^version = \".*\"/version = \"$version\"/" Cargo.toml
 cargo update --workspace  # sync the version into Cargo.lock

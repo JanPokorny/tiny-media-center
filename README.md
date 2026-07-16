@@ -53,8 +53,8 @@ toolchain and `mise tasks` lists the available tasks (`build`, `run`,
 
 ## release
 
-`mise run release X.Y.Z` bumps the version in Cargo.toml, commits, and
-pushes a `v*` tag. The tag runs the
+`mise run release` picks a patch/minor/major version bump, updates
+Cargo.toml, commits, and pushes a `v*` tag. The tag runs the
 [release workflow](.github/workflows/release.yml), which builds the
 portable x86_64 binary (same recipe as the mise `build-portable` task),
 attaches it to a GitHub Release, and triggers a rebuild of the
