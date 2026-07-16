@@ -27,11 +27,15 @@ srpm:
 	# first recipe line, so $(shell git ...) at parse time would come up
 	# empty in the Copr chroot. The committer timestamp (rather than a
 	# commit count) keeps the Release monotonic even in Copr's shallow
-	# (--depth 500) clones.
+	# (--depth 500) clones. The values are sed-baked into the spec that
+	# ships in the SRPM -- Copr re-evaluates that spec from its dist-git in
+	# every chroot, so rpmbuild --define flags would not survive.
 	snapdate=$$(git log -1 --format=%cd --date=format:%Y%m%d%H%M) && \
 	sha=$$(git rev-parse --short HEAD) && \
-	rpmbuild -bs "$(SPECFILE)" \
+	test -n "$$snapdate" && test -n "$$sha" && \
+	sed -e "s/^%define snapdate .*/%define snapdate $$snapdate/" \
+	    -e "s/^%define shortcommit .*/%define shortcommit $$sha/" \
+	    "$(SPECFILE)" > "$(outdir)/$(SPECFILE)" && \
+	rpmbuild -bs "$(outdir)/$(SPECFILE)" \
 	    --define "_sourcedir $(outdir)" \
-	    --define "_srcrpmdir $(outdir)" \
-	    --define "snapdate $$snapdate" \
-	    --define "shortcommit $$sha"
+	    --define "_srcrpmdir $(outdir)"
