@@ -39,6 +39,9 @@ pub struct Player {
 impl Player {
     pub fn new(video: &VideoSubsystem, mpv_config_dir: &str) -> Result<Player, libmpv2::Error> {
         let mut mpv = Mpv::with_initializer(|init| {
+            // Render through our RenderContext instead of letting mpv
+            // autoselect vo=gpu, which opens its own window.
+            init.set_option("vo", "libmpv")?;
             init.set_option("config", "yes")?;
             init.set_option("config-dir", mpv_config_dir)?;
             init.set_option("idle", "yes")?;
