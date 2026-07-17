@@ -45,8 +45,12 @@ impl Player {
             init.set_option("config", "yes")?;
             init.set_option("config-dir", mpv_config_dir)?;
             init.set_option("idle", "yes")?;
+            // Pause on the last frame at EOF instead of unloading, so the
+            // paused menu state can show it; the app watches eof-reached.
+            init.set_option("keep-open", "yes")?;
             init.set_option("input-default-bindings", "no")?;
-            init.set_option("osd-on-seek", "msg-bar")?;
+            // Seeks draw their own overlay UI; mpv's OSD bar would double it.
+            init.set_option("osd-on-seek", "no")?;
             init.set_option("sub-font-provider", "none")?;
             init.set_option("sub-font-size", 60_i64)?;
             init.set_option("osd-font-provider", "none")?;
@@ -69,7 +73,11 @@ impl Player {
         Ok(Player { render, mpv, time_pos: 0.0 })
     }
 
+    // Loads the file paused: opening media lands in the paused menu state.
     pub fn play(&mut self, file: &str, start: Option<f64>, aid: Option<&str>, sid: Option<&str>) {
+        // Discard queued events from the previous file (e.g. the EndFile a
+        // stop produces) so poll_ended can't mistake them for this file's.
+        while self.mpv.event_context_mut().wait_event(0.0).is_some() {}
         // Options set as properties (applied to the next loaded file) rather
         // than a loadfile options arg, whose position changed in mpv 0.38.
         let start_val = start.map_or("none".into(), |s| s.to_string());
@@ -81,6 +89,7 @@ impl Player {
             None => "auto",
         };
         let _ = self.mpv.set_property("sid", sid);
+        let _ = self.mpv.set_property("pause", true);
         self.time_pos = start.unwrap_or(0.0);
         let _ = command(&self.mpv, "loadfile", &[file, "replace"]);
     }
@@ -89,22 +98,31 @@ impl Player {
         let _ = command(&self.mpv, "stop", &[]);
     }
 
-    pub fn toggle_pause(&self) {
-        let _ = command(&self.mpv, "cycle", &["pause"]);
-        // Port of runtime.lua's show-end-time OSD.
-        let paused = self.mpv.get_property::<bool>("pause").unwrap_or(false);
-        let remaining = self.mpv.get_property::<f64>("time-remaining").unwrap_or(0.0);
-        let end = chrono::Local::now() + chrono::Duration::seconds(remaining as i64);
-        let text = format!(
-            "{} (ends at: {})",
-            if paused { "paused" } else { "unpaused" },
-            end.format("%H:%M")
-        );
-        let _ = command(&self.mpv, "show-text", &[&text, "5000"]);
+    pub fn set_pause(&self, pause: bool) {
+        let _ = self.mpv.set_property("pause", pause);
+    }
+
+    // True when keep-open paused playback on the last frame.
+    pub fn at_eof(&self) -> bool {
+        self.mpv.get_property("eof-reached").unwrap_or(false)
+    }
+
+    pub fn duration(&self) -> f64 {
+        self.mpv.get_property("duration").unwrap_or(0.0)
+    }
+
+    // Switch a track on the loaded file; prop is "aid" or "sid", an empty id
+    // means off (subtitles' "none" entry).
+    pub fn set_track(&self, prop: &str, id: &str) {
+        let _ = self.mpv.set_property(prop, if id.is_empty() { "no" } else { id });
     }
 
     pub fn seek(&self, secs: f64) {
         let _ = command(&self.mpv, "seek", &[&secs.to_string()]);
+    }
+
+    pub fn restart(&self) {
+        let _ = command(&self.mpv, "seek", &["0", "absolute"]);
     }
 
     pub fn add_sub_delay(&self, secs: f64) {

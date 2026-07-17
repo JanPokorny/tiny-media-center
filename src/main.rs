@@ -18,7 +18,7 @@ use sdl3::gamepad::Button;
 use sdl3::keyboard::{Keycode, Mod};
 use sdl3::mouse::MouseButton;
 use std::sync::mpsc::{channel, Receiver};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq)]
 enum TrackKind {
@@ -51,7 +51,12 @@ enum Task {
 enum Mode {
     Browse,
     Loading { text: String, subtext: String, task: Task },
-    Playing,
+    // A video is loaded (paused) and the playback menu is shown over its
+    // still frame. Opening a video and pausing playback are the same state.
+    Paused,
+    // Fullscreen playback; osd_until keeps the seek overlay (progress bar +
+    // time) up during and shortly after seeking.
+    Playing { osd_until: Instant },
 }
 
 struct App {
@@ -152,14 +157,25 @@ impl App {
                 child_path.push(name);
                 let Some(child) = media::get_node(&self.tree, &child_path) else { return };
                 match child.kind {
-                    Kind::Directory | Kind::Video => {
-                        let items = if child.kind == Kind::Directory {
-                            Self::directory_items(child)
-                        } else {
-                            Self::video_items(child)
-                        };
+                    Kind::Directory => {
+                        let items = Self::directory_items(child);
                         self.path = child_path;
                         self.menus.push(Menu::new(items, 0));
+                    }
+                    Kind::Video => {
+                        // Load right into the player, paused: the video menu
+                        // is drawn over the still frame from here on.
+                        let items = Self::video_items(child);
+                        let meta = &child.meta;
+                        let start = match (meta.position, meta.duration) {
+                            (Some(pos), Some(dur)) if pos < dur - 3.0 => Some(pos),
+                            _ => None,
+                        };
+                        let file = format!("{}/{}", self.config.media_path, child_path.join("/"));
+                        self.player.play(&file, start, meta.aid.as_deref(), meta.sid.as_deref());
+                        self.path = child_path;
+                        self.menus.push(Menu::new(items, 0));
+                        self.mode = Mode::Paused;
                     }
                     Kind::WiiGame | Kind::Script => {
                         // The Lua version launched Dolphin through the systemd
@@ -189,15 +205,13 @@ impl App {
                 }
             }
             Action::Play => {
-                let Some(node) = media::get_node(&self.tree, &self.path) else { return };
-                let meta = &node.meta;
-                let start = match (meta.position, meta.duration) {
-                    (Some(pos), Some(dur)) if pos < dur - 3.0 => Some(pos),
-                    _ => None,
-                };
-                let file = format!("{}/{}", self.config.media_path, self.path.join("/"));
-                self.player.play(&file, start, meta.aid.as_deref(), meta.sid.as_deref());
-                self.mode = Mode::Playing;
+                // The file is already loaded (paused); at EOF (keep-open's
+                // pause on the last frame) Play means watch again.
+                if self.player.at_eof() {
+                    self.player.restart();
+                }
+                self.player.set_pause(false);
+                self.mode = Mode::Playing { osd_until: Instant::now() };
             }
             Action::Tracks(kind) => {
                 let Some(node) = media::get_node(&self.tree, &self.path) else { return };
@@ -209,10 +223,13 @@ impl App {
                 let video_path = &self.path[..self.path.len() - 1];
                 let Some(video) = media::get_node_mut(&mut self.tree, video_path) else { return };
                 match kind {
-                    TrackKind::Audio => video.meta.aid = Some(id),
-                    TrackKind::Sub => video.meta.sid = Some(id),
+                    TrackKind::Audio => video.meta.aid = Some(id.clone()),
+                    TrackKind::Sub => video.meta.sid = Some(id.clone()),
                 }
                 media::save_metadata(&self.config.media_path, video_path, &video.meta);
+                // Apply to the loaded file too, so it takes effect right away.
+                let prop = if kind == TrackKind::Audio { "aid" } else { "sid" };
+                self.player.set_track(prop, &id);
                 let items = Self::video_items(video);
                 let selected = if kind == TrackKind::Audio { 1 } else { 2 };
                 self.path.pop();
@@ -223,11 +240,73 @@ impl App {
     }
 
     fn navigate_out(&mut self) {
-        if self.menus.len() > 1 {
+        // Backing out of the paused video menu closes the player (track
+        // submenus, whose path segments start with ':', pop normally).
+        if matches!(self.mode, Mode::Paused)
+            && !self.path.last().is_some_and(|s| s.starts_with(':'))
+        {
+            self.close_player();
+        } else if self.menus.len() > 1 {
             self.menus.pop();
             self.path.pop();
             self.current_menu().reset_scroll();
         }
+    }
+
+    fn save_position(&mut self) {
+        let position = self.player.time_pos;
+        if let Some(node) = media::get_node_mut(&mut self.tree, &self.path) {
+            node.meta.position = Some(position);
+            media::save_metadata(&self.config.media_path, &self.path, &node.meta);
+        }
+    }
+
+    // Playing -> Paused: freeze on the current frame and bring the menu up
+    // (the same state opening the video lands in).
+    fn pause_player(&mut self) {
+        self.player.set_pause(true);
+        self.save_position();
+        self.mode = Mode::Paused;
+    }
+
+    fn seek_player(&mut self, secs: f64) {
+        self.player.seek(secs);
+        if let Mode::Playing { osd_until } = &mut self.mode {
+            *osd_until = Instant::now() + Duration::from_secs(2);
+        }
+    }
+
+    // Unload the file and return to the directory menu, refreshed so the
+    // watch state (star/dim/progress) is current, keeping the video selected.
+    fn close_player(&mut self) {
+        self.player.stop();
+        while self.path.last().is_some_and(|s| s.starts_with(':')) {
+            self.menus.pop();
+            self.path.pop();
+        }
+        self.menus.pop();
+        let name = self.path.pop();
+        if let Some(dir) = media::get_node(&self.tree, &self.path) {
+            let items = Self::directory_items(dir);
+            let selected = name
+                .and_then(|n| {
+                    items.iter().position(|i| matches!(&i.action, Action::Open(m) if *m == n))
+                })
+                .unwrap_or(0);
+            self.current_menu().set_items(items, selected);
+        }
+        self.mode = Mode::Browse;
+    }
+}
+
+// Video timestamp as h:mm:ss (or m:ss under an hour) for the seek overlay.
+fn fmt_time(secs: f64) -> String {
+    let s = secs.max(0.0) as i64;
+    let (h, m, s) = (s / 3600, (s / 60) % 60, s % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
     }
 }
 
@@ -298,7 +377,7 @@ fn main() {
 
     'running: loop {
         let loading = matches!(app.mode, Mode::Loading { .. });
-        let playing = matches!(app.mode, Mode::Playing);
+        let playing = matches!(app.mode, Mode::Playing { .. });
 
         for event in event_pump.poll_iter() {
             match event {
@@ -318,22 +397,24 @@ fn main() {
                     panic!("restart failed: {err}");
                 }
                 _ if loading => {}
+                // Both back and confirm leave playback for the paused menu.
                 Event::KeyDown { keycode: Some(key), .. } if playing => match key {
-                    Keycode::Escape | Keycode::AcBack => app.player.stop(),
-                    Keycode::Left => app.player.seek(-5.0),
-                    Keycode::Right => app.player.seek(5.0),
-                    Keycode::Return => app.player.toggle_pause(),
+                    Keycode::Escape | Keycode::AcBack | Keycode::Return => app.pause_player(),
+                    Keycode::Left => app.seek_player(-5.0),
+                    Keycode::Right => app.seek_player(5.0),
                     Keycode::Up => app.player.add_sub_delay(-0.5),
                     Keycode::Down => app.player.add_sub_delay(0.5),
                     _ => {}
                 },
                 Event::ControllerButtonDown { button, .. } if playing => match button {
-                    Button::East => app.player.stop(),
-                    Button::South => app.player.toggle_pause(),
-                    Button::DPadLeft => app.player.seek(-5.0),
-                    Button::DPadRight => app.player.seek(5.0),
+                    Button::East | Button::South => app.pause_player(),
+                    Button::DPadLeft => app.seek_player(-5.0),
+                    Button::DPadRight => app.seek_player(5.0),
                     _ => {}
                 },
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left | MouseButton::Right, ..
+                } if playing => app.pause_player(),
                 _ if playing => {}
                 Event::KeyDown { keycode: Some(key), .. } => match key {
                     Keycode::Up => app.current_menu().navigate_up(),
@@ -380,22 +461,64 @@ fn main() {
         let (w, h) = window.size();
         let (wf, hf) = (w as f32, h as f32);
 
-        if matches!(app.mode, Mode::Playing) {
+        let playing_osd = match &app.mode {
+            Mode::Playing { osd_until } => Some(*osd_until),
+            _ => None,
+        };
+        if let Some(osd_until) = playing_osd {
             if app.player.poll_ended() {
-                // Save the final watch position and refresh the video menu.
-                let position = app.player.time_pos;
-                if let Some(node) = media::get_node_mut(&mut app.tree, &app.path) {
-                    node.meta.position = Some(position);
-                    media::save_metadata(&app.config.media_path, &app.path, &node.meta);
-                    let items = App::video_items(node);
-                    app.current_menu().set_items(items, 0);
-                }
-                app.mode = Mode::Browse;
+                // The file went away under us (stop/error): save and close.
+                app.save_position();
+                app.close_player();
+            } else if app.player.at_eof() {
+                // keep-open paused on the last frame; land in the menu state.
+                app.pause_player();
             } else {
                 app.player.render(w as i32, h as i32);
+                // Seek overlay: progress bar + current time, fading out over
+                // the last moments before osd_until.
+                let osd = osd_until.saturating_duration_since(Instant::now()).as_secs_f32();
+                if osd > 0.0 {
+                    let alpha = (osd / 0.3).min(1.0);
+                    let style = &app.config.style;
+                    canvas.set_size(w, h, 1.0);
+                    let duration = app.player.duration();
+                    let frac = if duration > 0.0 {
+                        (app.player.time_pos / duration).clamp(0.0, 1.0) as f32
+                    } else {
+                        0.0
+                    };
+                    let bar_height = 4.0;
+                    let mut bar = Path::new();
+                    bar.rect(0.0, hf - bar_height, wf, bar_height);
+                    canvas.fill_path(&bar, &Paint::color(color(style.text_color, 0.2 * alpha)));
+                    if frac > 0.0 {
+                        let mut fill = Path::new();
+                        fill.rect(0.0, hf - bar_height, wf * frac, bar_height);
+                        canvas.fill_path(&fill, &Paint::color(color(style.accent_color, alpha)));
+                    }
+                    let time_text =
+                        format!("{} / {}", fmt_time(app.player.time_pos), fmt_time(duration));
+                    let paint = Paint::color(color(style.text_color, alpha))
+                        .with_font(&[font])
+                        .with_font_size(style.font_size)
+                        .with_text_baseline(Baseline::Top);
+                    let text_w =
+                        canvas.measure_text(0.0, 0.0, &time_text, &paint).map_or(0.0, |m| m.width());
+                    let _ = canvas.fill_text(
+                        (wf - text_w) / 2.0,
+                        hf - bar_height - style.font_size * 1.2,
+                        &time_text,
+                        &paint,
+                    );
+                    canvas.flush();
+                }
                 window.gl_swap_window();
                 continue;
             }
+        } else if matches!(app.mode, Mode::Paused) && app.player.poll_ended() {
+            // Only stop/error events can arrive while paused (a failed load).
+            app.close_player();
         }
 
         // Drain background-task channels; return to Browse when done.
@@ -424,8 +547,16 @@ fn main() {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
+        let paused = matches!(app.mode, Mode::Paused);
+        if paused {
+            // The loaded video's still frame is the backdrop; femtovg draws
+            // the overlay and menu on top of it at flush.
+            app.player.render(w as i32, h as i32);
+        }
         canvas.set_size(w, h, 1.0);
-        canvas.clear_rect(0, 0, w, h, color(app.config.style.background_color, 1.0));
+        if !paused {
+            canvas.clear_rect(0, 0, w, h, color(app.config.style.background_color, 1.0));
+        }
         let style = &app.config.style;
         let dim_paint = Paint::color(color(style.dim_color, 1.0))
             .with_font(&[font])
@@ -445,8 +576,16 @@ fn main() {
             }
         } else {
             // Port of the love.draw browse branch: starfield + menu + title +
-            // watch progress bar + remaining-time line.
-            background.draw(&mut canvas, dt, wf, hf);
+            // watch progress bar + remaining-time line. While paused, the
+            // starfield is replaced by the video frame dimmed by a
+            // semitransparent black overlay.
+            if paused {
+                let mut overlay = Path::new();
+                overlay.rect(0.0, 0.0, wf, hf);
+                canvas.fill_path(&overlay, &Paint::color(color([0.0, 0.0, 0.0], 0.6)));
+            } else {
+                background.draw(&mut canvas, dt, wf, hf);
+            }
             if let Some(menu) = app.menus.last_mut() {
                 menu.draw(&mut canvas, font, &app.config, dt, wf, hf);
             }
