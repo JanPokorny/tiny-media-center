@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # One-shot dev setup for Fedora 44+: run as `./setup.sh` from the repo root
-# (sudo is used internally for dnf). Installs the distro build dependencies
-# (libmpv headers and SDL3's Linux build deps, since SDL3 is compiled from
-# source by default), then installs mise and the pinned toolchain
+# (sudo is used internally for dnf). Installs the distro build and runtime
+# dependencies (libmpv and SDL3's Linux build deps, since SDL3 is compiled
+# from source by default), then installs mise and the pinned toolchain
 # (`mise install`).
 set -euo pipefail
 
@@ -30,6 +30,17 @@ $sudo dnf install -y \
     libxkbcommon-devel wayland-devel wayland-protocols-devel \
     libdrm-devel mesa-libgbm-devel libdecor-devel \
     libusb1-devel liburing-devel
+
+echo "== installing runtime dependencies (sudo dnf)"
+# mpv-libs (libmpv.so.2, the embedded player) already comes with the mpv
+# headers above; subliminal downloads subtitles during media scans.
+$sudo dnf install -y mpv-libs subliminal
+# dolphin-emu launches Wii games; it lives in RPM Fusion free, so skip it
+# with a warning when that repo isn't enabled.
+if ! $sudo dnf install -y dolphin-emu; then
+    echo "warning: dolphin-emu is not available (it needs RPM Fusion free:" >&2
+    echo "https://rpmfusion.org/Configuration); Wii game launching won't work" >&2
+fi
 
 mise=mise
 if ! command -v mise >/dev/null; then
