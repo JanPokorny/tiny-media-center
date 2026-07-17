@@ -1,9 +1,0 @@
-#!/bin/bash
-# HTPC kiosk launcher: runs the binary sitting next to this script (e.g. a
-# GitHub Release download), falling back to a local cargo build.
-set -euo pipefail
-cd -- "$( dirname -- "${BASH_SOURCE[0]}" )"
-BIN=$(pwd)/tiny-media-center
-[ -x "$BIN" ] || BIN=$(pwd)/target/release/tiny-media-center
-cd /media
-exec "$BIN"
