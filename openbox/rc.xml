@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- TV media box config: single desktop, all normal windows open
+     maximized and undecorated (fullscreen look). Dialogs and popups
+     keep decorations and normal placement.
+     Previous full config backed up as rc.xml.bak -->
+
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+
+<focus>
+  <focusNew>yes</focusNew>
+</focus>
+
+<placement>
+  <policy>Smart</policy>
+  <center>yes</center>
+  <monitor>Primary</monitor>
+  <primaryMonitor>1</primaryMonitor>
+</placement>
+
+<theme>
+  <name>Clearlooks</name>
+  <titleLayout>NLIMC</titleLayout>
+  <keepBorder>no</keepBorder>
+  <font place="ActiveWindow">
+    <name>sans</name>
+    <size>10</size>
+    <weight>bold</weight>
+  </font>
+  <font place="InactiveWindow">
+    <name>sans</name>
+    <size>10</size>
+    <weight>bold</weight>
+  </font>
+  <font place="MenuHeader">
+    <name>sans</name>
+    <size>11</size>
+  </font>
+  <font place="MenuItem">
+    <name>sans</name>
+    <size>11</size>
+  </font>
+  <font place="ActiveOnScreenDisplay">
+    <name>sans</name>
+    <size>11</size>
+    <weight>bold</weight>
+  </font>
+  <font place="InactiveOnScreenDisplay">
+    <name>sans</name>
+    <size>11</size>
+    <weight>bold</weight>
+  </font>
+</theme>
+
+<desktops>
+  <number>1</number>
+</desktops>
+
+<keyboard>
+  <keybind key="XF86HomePage">
+    <action name="Close"/>
+  </keybind>
+
+  <keybind key="Menu">
+    <action name="ShowMenu"><menu>root-menu</menu></action>
+  </keybind>
+
+  <keybind key="A-Tab">
+    <action name="NextWindow">
+      <finalactions>
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </finalactions>
+    </action>
+  </keybind>
+  <keybind key="A-S-Tab">
+    <action name="PreviousWindow">
+      <finalactions>
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </finalactions>
+    </action>
+  </keybind>
+
+  <keybind key="XF86AudioRaiseVolume">
+    <action name="Execute">
+      <command>sh -c 'wpctl set-mute @DEFAULT_AUDIO_SINK@ 0; wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+; v=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk "{print int(\$2*100)}"); notify-send -u low -t 1000 -h string:x-dunst-stack-tag:volume -h int:value:$v "Volume: $v%"'</command>
+    </action>
+  </keybind>
+  <keybind key="XF86AudioLowerVolume">
+    <action name="Execute">
+      <command>sh -c 'wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-; v=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk "{print int(\$2*100)}"); notify-send -u low -t 1000 -h string:x-dunst-stack-tag:volume -h int:value:$v "Volume: $v%"'</command>
+    </action>
+  </keybind>
+</keyboard>
+
+<mouse>
+  <context name="Client">
+    <mousebind button="Left" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+    <mousebind button="Middle" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+    <mousebind button="Right" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+  </context>
+
+  <context name="Titlebar">
+    <mousebind button="Left" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+  </context>
+
+  <context name="Close">
+    <mousebind button="Left" action="Press">
+      <action name="Focus"/>
+      <action name="Raise"/>
+    </mousebind>
+    <mousebind button="Left" action="Click">
+      <action name="Close"/>
+    </mousebind>
+  </context>
+</mouse>
+
+<menu>
+  <file>menu.xml</file>
+  <manageDesktops>no</manageDesktops>
+</menu>
+
+<applications>
+  <!-- every regular window opens maximized with no titlebar/borders -->
+  <application type="normal">
+    <decor>no</decor>
+    <maximized>yes</maximized>
+  </application>
+</applications>
+
+</openbox_config>

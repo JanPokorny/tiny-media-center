@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<openbox_menu xmlns="http://openbox.org/3.4/menu">
+
+<menu id="applications-menu" label="Launch" execute="/usr/libexec/openbox-xdg-menu applications"/>
+
+<menu id="root-menu" label="TV">
+  <!-- open windows, merged in from the old middle-click menu -->
+  <menu id="client-list-combined-menu"/>
+  <separator/>
+  <menu id="applications-menu"/>
+</menu>
+
+</openbox_menu>
