@@ -163,11 +163,21 @@ pub fn probe(mpv: &mut Option<Mpv>, file: &str) -> Option<(f64, BTreeMap<String,
         .ok();
     }
     let mpv = mpv.as_mut()?;
+    // Discard events left over from the previous probe: the EndFile its stop
+    // produced would otherwise read as this file failing to load, and its
+    // FileLoaded would break the wait loop below before this file is ready
+    // (attributing the previous file's duration/tracks to this one).
+    while mpv.event_context_mut().wait_event(0.0).is_some() {}
     command(mpv, "loadfile", &[file]).ok()?;
+    // The previous file's EndFile can still arrive after the drain (mpv queues
+    // it from the playback thread), but always before this load's StartFile.
+    let mut started = false;
     loop {
         match mpv.event_context_mut().wait_event(30.0)?.ok()? {
+            Event::StartFile => started = true,
             Event::FileLoaded => break,
-            Event::EndFile(_) | Event::Shutdown => return None,
+            Event::EndFile(_) if started => return None,
+            Event::Shutdown => return None,
             _ => {}
         }
     }
