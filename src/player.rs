@@ -32,7 +32,7 @@ pub fn get_proc_address(video: &VideoSubsystem, name: &str) -> *mut c_void {
 
 pub struct Player {
     render: RenderContext, // declared before mpv: must be freed first
-    pub mpv: Mpv,
+    mpv: Mpv,
     pub time_pos: f64,
 }
 
