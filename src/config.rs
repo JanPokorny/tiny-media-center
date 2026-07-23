@@ -50,8 +50,12 @@ impl Default for Config {
 }
 
 pub fn load() -> Config {
-    std::fs::read_to_string(config_dir().join("config.toml"))
-        .ok()
-        .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default()
+    let path = config_dir().join("config.toml");
+    // A missing config is normal (defaults); a broken one gets reported
+    // instead of silently falling back.
+    let Ok(s) = std::fs::read_to_string(&path) else { return Config::default() };
+    toml::from_str(&s).unwrap_or_else(|e| {
+        eprintln!("tiny-media-center: ignoring unparsable config {}: {e}", path.display());
+        Config::default()
+    })
 }
