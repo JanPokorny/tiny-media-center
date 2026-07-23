@@ -109,6 +109,17 @@ impl App {
             .then(|| self.fs_path())
     }
 
+    // The open file's display name when it's an audio file: audio has no
+    // video frames to render, so playback shows a now-playing screen instead.
+    pub fn audio_name(&self) -> Option<&str> {
+        self.stack.iter().find_map(|frame| match frame {
+            Frame::Video { name, .. } if name.ends_with(".mp3") => {
+                Some(media::strip_extension(name))
+            }
+            _ => None,
+        })
+    }
+
     pub fn title(&self) -> &str {
         match self.stack.last().unwrap() {
             Frame::Dir { name: None, .. } => "tiny media center",

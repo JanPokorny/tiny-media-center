@@ -67,9 +67,6 @@ impl Player {
                 }),
             ],
         )?;
-        // Audio visualiser (lavfi-complex) for music files; needs an mpv
-        // build with Lua scripting -- ignore failure if unavailable.
-        let _ = command(&mpv, "load-script", &[&format!("{mpv_config_dir}/visualiser.lua")]);
         Ok(Player { render, mpv, time_pos: 0.0 })
     }
 
