@@ -5,6 +5,10 @@
 use crate::config::{color, Config};
 use femtovg::{Baseline, Canvas, Color, FontId, Paint, Renderer};
 
+pub fn text_width<R: Renderer>(canvas: &Canvas<R>, text: &str, paint: &Paint) -> f32 {
+    canvas.measure_text(0.0, 0.0, text, paint).map_or(0.0, |m| m.width())
+}
+
 pub struct MenuItem<A> {
     pub label: String,
     // Lowercased key used for jump-to-letter and sorting; defaults to the
@@ -40,9 +44,8 @@ impl<A> Menu<A> {
     }
 
     pub fn set_items(&mut self, items: Vec<MenuItem<A>>, selected: usize) {
-        self.items = items;
-        self.selected = selected;
-        self.scroll_offset = f32::NAN;
+        self.update_items(items, selected);
+        self.reset_scroll();
     }
 
     // Replace the items in place (background refresh), keeping the scroll
@@ -135,14 +138,13 @@ impl<A> Menu<A> {
 
             let x = 50.0;
             let prefix = if focused { "> " } else { "  " };
-            let prefix_width = canvas.measure_text(0.0, 0.0, prefix, &paint).map_or(0.0, |m| m.width());
             let _ = canvas.fill_text(x, item_y, prefix, &paint);
 
             // Squish the focused label horizontally when it overflows.
-            let text_x = x + prefix_width;
+            let text_x = x + text_width(canvas, prefix, &paint);
             let max_width = w - text_x;
-            let text_width = canvas.measure_text(0.0, 0.0, &item.label, &paint).map_or(0.0, |m| m.width());
-            let target_scale = if focused && text_width > max_width { max_width / text_width } else { 1.0 };
+            let label_width = text_width(canvas, &item.label, &paint);
+            let target_scale = if focused && label_width > max_width { max_width / label_width } else { 1.0 };
             item.squish += (target_scale - item.squish) * (8.0 * dt).min(1.0);
 
             canvas.save();

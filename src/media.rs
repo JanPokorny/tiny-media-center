@@ -52,9 +52,10 @@ fn is_false(b: &bool) -> bool {
 // track labels live in flattened `track_<type>_<id>` string keys.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Meta {
-    #[serde(default, deserialize_with = "num", skip_serializing_if = "Option::is_none")]
+    // serde deserializes f64 from TOML integers too, so `duration = 120` parses.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
-    #[serde(default, deserialize_with = "num", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub position: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aid: Option<String>,
@@ -88,6 +89,18 @@ impl Meta {
         self.tracks.get(&track_key(kind.as_str(), id)).map(String::as_str)
     }
 
+    // Record a preflight probe's outcome (see ScanMsg::Probed).
+    pub fn apply_probe(&mut self, result: &Option<(f64, BTreeMap<String, String>)>) {
+        match result {
+            Some((duration, tracks)) => {
+                self.duration = Some(*duration);
+                self.tracks = tracks.clone();
+                self.probe_failed = false;
+            }
+            None => self.probe_failed = true,
+        }
+    }
+
     // All tracks of one kind as (id, label), sorted by numeric id.
     pub fn track_list(&self, kind: TrackKind) -> Vec<(String, String)> {
         let prefix = format!("track_{}_", kind.as_str());
@@ -102,20 +115,6 @@ impl Meta {
         list.sort_by_key(|(id, _, _)| *id);
         list.into_iter().map(|(_, id, label)| (id, label)).collect()
     }
-}
-
-// Accept both TOML integers and floats for duration/position.
-fn num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum N {
-        F(f64),
-        I(i64),
-    }
-    Ok(Option::<N>::deserialize(d)?.map(|n| match n {
-        N::F(f) => f,
-        N::I(i) => i as f64,
-    }))
 }
 
 // A node is named by its key in the parent's children map; the path to it is
@@ -266,14 +265,7 @@ pub fn spawn_scan(media_path: String, tx: Sender<ScanMsg>) {
             // Re-read the sidecar before writing: the user may have started
             // watching this video (saving a position) while this pass ran.
             let mut meta = load_metadata(&media_path, &parts);
-            match &result {
-                Some((duration, tracks)) => {
-                    meta.duration = Some(*duration);
-                    meta.tracks = tracks.clone();
-                    meta.probe_failed = false;
-                }
-                None => meta.probe_failed = true,
-            }
+            meta.apply_probe(&result);
             save_metadata(&media_path, &parts, &meta);
             let _ = tx.send(ScanMsg::Probed { parts, result });
         }
