@@ -205,7 +205,7 @@ pub fn probe(mpv: &mut Option<Mpv>, file: &str) -> Option<(f64, BTreeMap<String,
                 Some(codec) if codec != "subrip" => label = format!("{label}/{codec}"),
                 _ => {}
             }
-            tracks.insert(format!("track_{kind}_{id}"), label);
+            tracks.insert(crate::media::track_key(&kind, &id.to_string()), label);
         }
     }
     let _ = command(mpv, "stop", &[]);

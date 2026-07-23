@@ -39,6 +39,9 @@ accent_color = [1, 0.8, 0]
 dim_color = [0.5, 0.5, 0.5]
 ```
 
+The embedded mpv player reads `~/.config/tiny-media-center/mpv/mpv.conf`;
+it is created with defaults on first run and your edits to it are kept.
+
 ## build from source
 
 `cargo build --release` — needs libmpv headers (`apt install libmpv-dev`,
