@@ -13,6 +13,7 @@ use app::{App, Mode};
 use background::Background;
 use config::color;
 use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, Paint, Path, Renderer};
+use menu::text_width;
 use player::Player;
 use sdl3::event::Event;
 use sdl3::keyboard::{Keycode, Mod};
@@ -30,6 +31,12 @@ fn fmt_time(secs: f64) -> String {
     } else {
         format!("{m}:{s:02}")
     }
+}
+
+// Draw text horizontally centered, with its top edge at y.
+fn draw_centered<R: Renderer>(canvas: &mut Canvas<R>, text: &str, y: f32, wf: f32, paint: &Paint) {
+    let text_w = text_width(canvas, text, paint);
+    let _ = canvas.fill_text((wf - text_w) / 2.0, y, text, paint);
 }
 
 // Bottom progress bar with a centered line of text above it: the seek
@@ -60,13 +67,7 @@ fn draw_progress<R: Renderer>(
             .with_font(&[font])
             .with_font_size(style.font_size)
             .with_text_baseline(Baseline::Top);
-        let text_w = canvas.measure_text(0.0, 0.0, text, &paint).map_or(0.0, |m| m.width());
-        let _ = canvas.fill_text(
-            (wf - text_w) / 2.0,
-            hf - bar_height - style.font_size * 1.2,
-            text,
-            &paint,
-        );
+        draw_centered(canvas, text, hf - bar_height - style.font_size * 1.2, wf, &paint);
     }
 }
 
@@ -82,8 +83,9 @@ fn main() {
     if !mpv_conf.exists() {
         let _ = std::fs::write(&mpv_conf, include_bytes!("../attachments/mpv/mpv.conf"));
     }
-    let _ = std::fs::write(mpv_dir.join("visualiser.lua"), include_bytes!("../attachments/mpv/visualiser.lua"));
     let _ = std::fs::write(mpv_dir.join("subfont.ttf"), FONT);
+    // Left behind by older versions (the audio visualiser script).
+    let _ = std::fs::remove_file(mpv_dir.join("visualiser.lua"));
 
     let sdl = sdl3::init().unwrap();
     let video = sdl.video().unwrap();
@@ -194,13 +196,25 @@ fn main() {
             } else {
                 app.autosave_position();
                 app.player.render(w as i32, h as i32);
+                canvas.set_size(w, h, 1.0);
+                let style = &app.config.style;
+                // Audio files render no video: gray "now playing" in the
+                // corner, the file name centered in white.
+                if let Some(name) = app.audio_name() {
+                    canvas.clear_rect(0, 0, w, h, color(style.background_color, 1.0));
+                    let paint = Paint::color(color(style.dim_color, 1.0))
+                        .with_font(&[font])
+                        .with_font_size(style.font_size)
+                        .with_text_baseline(Baseline::Top);
+                    let _ = canvas.fill_text(0.0, 0.0, "now playing", &paint);
+                    let paint = paint.with_color(color(style.text_color, 1.0));
+                    draw_centered(&mut canvas, name, (hf - style.font_size) / 2.0, wf, &paint);
+                }
                 // Seek overlay: progress bar + current time, fading out over
                 // the last moments before osd_until.
                 let osd = osd_until.saturating_duration_since(Instant::now()).as_secs_f32();
                 if osd > 0.0 {
                     let alpha = (osd / 0.3).min(1.0);
-                    let style = &app.config.style;
-                    canvas.set_size(w, h, 1.0);
                     let duration = app.player.duration();
                     let frac = if duration > 0.0 {
                         (app.player.time_pos / duration).clamp(0.0, 1.0) as f32
@@ -210,8 +224,8 @@ fn main() {
                     let time_text =
                         format!("{} / {}", fmt_time(app.player.time_pos), fmt_time(duration));
                     draw_progress(&mut canvas, style, font, frac, &time_text, style.text_color, alpha, wf, hf);
-                    canvas.flush();
                 }
+                canvas.flush();
                 window.gl_swap_window();
                 continue;
             }
@@ -244,13 +258,11 @@ fn main() {
             let style = &app.config.style;
             let size = style.font_size;
             let paint = dim_paint.clone().with_color(color(style.text_color, 1.0));
-            let text_w = canvas.measure_text(0.0, 0.0, text, &paint).map_or(0.0, |m| m.width());
-            let _ = canvas.fill_text((wf - text_w) / 2.0, (hf - size) / 2.0 - size * 0.7, text, &paint);
+            draw_centered(&mut canvas, text, (hf - size) / 2.0 - size * 0.7, wf, &paint);
             let subtext = &app.scan_status;
             if !subtext.is_empty() {
                 let paint = dim_paint.clone().with_font_size(size * 0.5);
-                let sub_w = canvas.measure_text(0.0, 0.0, subtext, &paint).map_or(0.0, |m| m.width());
-                let _ = canvas.fill_text((wf - sub_w) / 2.0, (hf - size) / 2.0 + size * 0.7, subtext, &paint);
+                draw_centered(&mut canvas, subtext, (hf - size) / 2.0 + size * 0.7, wf, &paint);
             }
         } else {
             // Browse/paused: starfield + menu + title + watch progress bar +
@@ -306,7 +318,7 @@ fn main() {
                     .clone()
                     .with_color(color(rgb, 1.0))
                     .with_font_size(style.font_size * 0.4);
-                let text_w = canvas.measure_text(0.0, 0.0, &text, &paint).map_or(0.0, |m| m.width());
+                let text_w = text_width(&canvas, &text, &paint);
                 let _ = canvas.fill_text(wf - text_w - 10.0, 10.0, &text, &paint);
             }
         }

@@ -27,12 +27,6 @@ pub enum Frame {
 }
 
 impl Frame {
-    fn menu(&self) -> &Menu<Action> {
-        match self {
-            Frame::Dir { menu, .. } | Frame::Video { menu, .. } | Frame::Tracks { menu, .. } => menu,
-        }
-    }
-
     pub fn menu_mut(&mut self) -> &mut Menu<Action> {
         match self {
             Frame::Dir { menu, .. } | Frame::Video { menu, .. } | Frame::Tracks { menu, .. } => menu,
@@ -105,20 +99,25 @@ impl App {
             .collect()
     }
 
-    // Path of the open video, when one is on the stack.
+    // Path of the open video, when one is on the stack. A Video frame is
+    // always the last named frame (only Tracks can sit above it), so its
+    // path is the whole filesystem path.
     pub fn video_path(&self) -> Option<Vec<String>> {
-        let mut path = vec![];
-        for frame in &self.stack {
-            match frame {
-                Frame::Dir { name, .. } => path.extend(name.clone()),
-                Frame::Video { name, .. } => {
-                    path.push(name.clone());
-                    return Some(path);
-                }
-                Frame::Tracks { .. } => {}
+        self.stack
+            .iter()
+            .any(|frame| matches!(frame, Frame::Video { .. }))
+            .then(|| self.fs_path())
+    }
+
+    // The open file's display name when it's an audio file: audio has no
+    // video frames to render, so playback shows a now-playing screen instead.
+    pub fn audio_name(&self) -> Option<&str> {
+        self.stack.iter().find_map(|frame| match frame {
+            Frame::Video { name, .. } if name.ends_with(".mp3") => {
+                Some(media::strip_extension(name))
             }
-        }
-        None
+            _ => None,
+        })
     }
 
     pub fn title(&self) -> &str {
@@ -128,6 +127,11 @@ impl App {
             Frame::Video { name, .. } => media::strip_extension(name),
             Frame::Tracks { kind, .. } => kind.as_str(),
         }
+    }
+
+    // Index of a directory item by file name (for restoring the selection).
+    fn item_index(items: &[MenuItem<Action>], name: &str) -> Option<usize> {
+        items.iter().position(|i| matches!(&i.action, Action::Open(m) if m == name))
     }
 
     // Item construction + sort: in-progress videos first, then unwatched,
@@ -164,23 +168,21 @@ impl App {
     // Play / Audio [current] / Subtitles [current].
     fn video_items(video: &Node) -> Vec<MenuItem<Action>> {
         let meta = &video.meta;
-        let current = |kind| meta.selection(kind).and_then(|id| meta.track_label(kind, id));
-        let audio_label = match current(TrackKind::Audio) {
-            Some(label) => format!("Audio [{label}]"),
-            None => "Audio".to_string(),
-        };
-        let sub_label = if meta.selection(TrackKind::Sub) == Some("") {
-            "Subtitles [none]".to_string()
-        } else {
-            match current(TrackKind::Sub) {
-                Some(label) => format!("Subtitles [{label}]"),
-                None => "Subtitles".to_string(),
+        let label = |base: &str, kind| {
+            let current = match meta.selection(kind) {
+                Some("") => Some("none"), // subtitles off
+                Some(id) => meta.track_label(kind, id),
+                None => None,
+            };
+            match current {
+                Some(current) => format!("{base} [{current}]"),
+                None => base.to_string(),
             }
         };
         vec![
             MenuItem::new("Play".into(), Action::Play),
-            MenuItem::new(audio_label, Action::Tracks(TrackKind::Audio)),
-            MenuItem::new(sub_label, Action::Tracks(TrackKind::Sub)),
+            MenuItem::new(label("Audio", TrackKind::Audio), Action::Tracks(TrackKind::Audio)),
+            MenuItem::new(label("Subtitles", TrackKind::Sub), Action::Tracks(TrackKind::Sub)),
         ]
     }
 
@@ -224,7 +226,7 @@ impl App {
     }
 
     fn navigate_in(&mut self) {
-        let menu = self.stack.last().unwrap().menu();
+        let menu = self.menu();
         let Some(action) = menu.items.get(menu.selected).map(|i| i.action.clone()) else { return };
         match action {
             Action::Open(name) => self.open(name),
@@ -388,21 +390,14 @@ impl App {
         while matches!(self.stack.last(), Some(Frame::Tracks { .. })) {
             self.stack.pop();
         }
-        let name = match self.stack.last() {
-            Some(Frame::Video { .. }) => match self.stack.pop() {
-                Some(Frame::Video { name, .. }) => Some(name),
-                _ => None,
-            },
+        let name = match self.stack.pop_if(|f| matches!(f, Frame::Video { .. })) {
+            Some(Frame::Video { name, .. }) => Some(name),
             _ => None,
         };
         let path = self.fs_path();
         if let Some(dir) = media::get_node(&self.tree, &path) {
             let items = Self::directory_items(dir);
-            let selected = name
-                .and_then(|n| {
-                    items.iter().position(|i| matches!(&i.action, Action::Open(m) if *m == n))
-                })
-                .unwrap_or(0);
+            let selected = name.and_then(|n| Self::item_index(&items, &n)).unwrap_or(0);
             self.menu().set_items(items, selected);
         }
         self.mode = Mode::Browse;
@@ -427,14 +422,7 @@ impl App {
                 }
                 Ok(ScanMsg::Probed { parts, result }) => {
                     if let Some(node) = media::get_node_mut(&mut self.tree, &parts) {
-                        match result {
-                            Some((duration, tracks)) => {
-                                node.meta.duration = Some(duration);
-                                node.meta.tracks = tracks;
-                                node.meta.probe_failed = false;
-                            }
-                            None => node.meta.probe_failed = true,
-                        }
+                        node.meta.apply_probe(&result);
                     }
                     refresh = true;
                 }
@@ -472,7 +460,7 @@ impl App {
             _ => None,
         });
         let selected = selected_name
-            .and_then(|n| items.iter().position(|i| matches!(&i.action, Action::Open(m) if *m == n)))
+            .and_then(|n| Self::item_index(&items, &n))
             .unwrap_or_else(|| menu.selected.min(items.len().saturating_sub(1)));
         menu.update_items(items, selected);
     }
