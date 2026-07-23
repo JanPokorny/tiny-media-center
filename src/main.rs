@@ -181,11 +181,7 @@ fn main() {
         let (w, h) = window.size();
         let (wf, hf) = (w as f32, h as f32);
 
-        let playing_osd = match &app.mode {
-            Mode::Playing { osd_until } => Some(*osd_until),
-            _ => None,
-        };
-        if let Some(osd_until) = playing_osd {
+        if let &Mode::Playing { osd_until } = &app.mode {
             if app.player.poll_ended() {
                 // The file went away under us (stop/error): save and close.
                 app.save_position();
@@ -285,7 +281,7 @@ fn main() {
             let _ = canvas.fill_text(0.0, 0.0, app.title(), &dim_paint);
 
             let style = &app.config.style;
-            if let Some(video) = app.video_path().and_then(|p| media::get_node(&app.tree, &p)) {
+            if let Some(video) = app.video_node() {
                 let pct = media::watch_pct(video);
                 let time_text = video
                     .meta

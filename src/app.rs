@@ -56,7 +56,7 @@ const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(10);
 
 pub struct App {
     pub config: Config,
-    pub tree: Node,
+    tree: Node,
     pub stack: Vec<Frame>,
     pub mode: Mode,
     pub player: Player,
@@ -102,11 +102,16 @@ impl App {
     // Path of the open video, when one is on the stack. A Video frame is
     // always the last named frame (only Tracks can sit above it), so its
     // path is the whole filesystem path.
-    pub fn video_path(&self) -> Option<Vec<String>> {
+    fn video_path(&self) -> Option<Vec<String>> {
         self.stack
             .iter()
             .any(|frame| matches!(frame, Frame::Video { .. }))
             .then(|| self.fs_path())
+    }
+
+    // The open video's node in the media tree, when one is on the stack.
+    pub fn video_node(&self) -> Option<&Node> {
+        media::get_node(&self.tree, &self.video_path()?)
     }
 
     // The open file's display name when it's an audio file: audio has no
@@ -147,17 +152,15 @@ impl App {
                 } else {
                     media::strip_extension(name).to_string()
                 };
+                // watch_pct is 0 for anything that isn't a video, so pct > 0
+                // alone identifies (partially) watched videos.
                 let pct = media::watch_pct(child);
-                let category = if (1..=89).contains(&pct) { 1 } else if pct == 0 { 2 } else { 3 };
+                let category = if pct == 0 { 2 } else if pct < 100 { 1 } else { 3 };
                 let jump = display.to_lowercase();
-                let label = if child.kind == Kind::Video && pct > 0 && pct < 100 {
-                    format!("* {display}")
-                } else {
-                    display
-                };
+                let label = if category == 1 { format!("* {display}") } else { display };
                 let mut item = MenuItem::new(label, Action::Open(name.clone()));
                 item.jump = jump;
-                item.dim = child.kind == Kind::Video && pct >= 100;
+                item.dim = category == 3;
                 (category, item)
             })
             .collect();
@@ -241,8 +244,7 @@ impl App {
                 self.mode = Mode::Playing { osd_until: Instant::now() };
             }
             Action::Tracks(kind) => {
-                let Some(path) = self.video_path() else { return };
-                let Some(video) = media::get_node(&self.tree, &path) else { return };
+                let Some(video) = self.video_node() else { return };
                 let menu = Menu::new(Self::track_items(video, kind), 0);
                 self.stack.push(Frame::Tracks { kind, menu });
             }
@@ -337,10 +339,6 @@ impl App {
 
     fn navigate_out(&mut self) {
         match self.stack.last() {
-            Some(Frame::Tracks { .. }) => {
-                self.stack.pop();
-                self.menu().reset_scroll();
-            }
             // Backing out of the paused video menu closes the player.
             Some(Frame::Video { .. }) => self.close_player(),
             _ if self.stack.len() > 1 => {
@@ -408,7 +406,6 @@ impl App {
     pub fn pump_scan(&mut self) {
         let Some(rx) = self.scan_rx.take() else { return };
         let mut refresh = false;
-        let mut done = false;
         loop {
             match rx.try_recv() {
                 Ok(ScanMsg::Status(status)) => self.scan_status = status,
@@ -428,14 +425,13 @@ impl App {
                 }
                 Ok(ScanMsg::Done) | Err(TryRecvError::Disconnected) => {
                     self.scan_status.clear();
-                    done = true;
                     break;
                 }
-                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Empty) => {
+                    self.scan_rx = Some(rx);
+                    break;
+                }
             }
-        }
-        if !done {
-            self.scan_rx = Some(rx);
         }
         if refresh {
             self.refresh_dir_menu();
@@ -445,10 +441,7 @@ impl App {
     // Rebuild the visible directory menu after background metadata updates,
     // keeping the selection (by name) and the scroll position.
     fn refresh_dir_menu(&mut self) {
-        if !matches!(self.mode, Mode::Browse) {
-            return;
-        }
-        if !matches!(self.stack.last(), Some(Frame::Dir { .. })) {
+        if !matches!(self.mode, Mode::Browse) || !matches!(self.stack.last(), Some(Frame::Dir { .. })) {
             return;
         }
         let path = self.fs_path();

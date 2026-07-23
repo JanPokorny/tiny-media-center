@@ -179,14 +179,11 @@ pub fn get_node_mut<'a>(root: &'a mut Node, path: &[String]) -> Option<&'a mut N
 }
 
 pub fn watch_pct(node: &Node) -> i32 {
-    if node.kind != Kind::Video {
+    let duration = node.meta.duration.unwrap_or(0.0);
+    if node.kind != Kind::Video || duration <= 0.0 {
         return 0;
     }
-    let Some(duration) = node.meta.duration else { return 0 };
-    if duration <= 0.0 {
-        return 0;
-    }
-    let pct = ((node.meta.position.unwrap_or(0.0) / duration) * 100.0 + 0.5).floor() as i32;
+    let pct = (node.meta.position.unwrap_or(0.0) / duration * 100.0).round() as i32;
     if pct >= 90 {
         100
     } else {
@@ -230,17 +227,17 @@ pub fn spawn_scan(media_path: String, tx: Sender<ScanMsg>) {
             if !entry.file_type().is_file() {
                 continue;
             }
-            let Ok(rel) = entry.path().strip_prefix(&media_path) else { continue };
-            let parts: Vec<String> = rel
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .collect();
-            let kind = match parts.last().unwrap().rsplit_once('.').map(|(_, ext)| ext) {
+            let kind = match entry.path().extension().and_then(|e| e.to_str()) {
                 Some("mp4" | "mkv" | "avi" | "mp3") => Kind::Video,
                 Some("rvz" | "wbfs") => Kind::WiiGame,
                 Some("sh") => Kind::Script,
                 _ => continue,
             };
+            let Ok(rel) = entry.path().strip_prefix(&media_path) else { continue };
+            let parts: Vec<String> = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect();
 
             let mut meta = Meta::default();
             if kind == Kind::Video {
