@@ -17,9 +17,13 @@ pub enum Action {
     Play,
     Tracks(TrackKind),
     SelectTrack(TrackKind, String),
+    Browse,
+    Shutdown,
 }
 
 pub enum Frame {
+    // The app's top-level menu, always the bottom of the stack.
+    Home { menu: Menu<Action> },
     // name is None for the root directory.
     Dir { name: Option<String>, menu: Menu<Action> },
     Video { name: String, menu: Menu<Action> },
@@ -29,7 +33,10 @@ pub enum Frame {
 impl Frame {
     pub fn menu_mut(&mut self) -> &mut Menu<Action> {
         match self {
-            Frame::Dir { menu, .. } | Frame::Video { menu, .. } | Frame::Tracks { menu, .. } => menu,
+            Frame::Home { menu }
+            | Frame::Dir { menu, .. }
+            | Frame::Video { menu, .. }
+            | Frame::Tracks { menu, .. } => menu,
         }
     }
 }
@@ -66,6 +73,8 @@ pub struct App {
     pub scan_status: String,
     scan_rx: Option<Receiver<ScanMsg>>,
     last_pos_save: Instant,
+    // Selected item of the media root, kept across leaving it for Home.
+    root_selection: Option<String>,
 }
 
 impl App {
@@ -73,13 +82,22 @@ impl App {
         App {
             config,
             tree: Node::default(),
-            stack: vec![Frame::Dir { name: None, menu: Menu::new(vec![], 0) }],
+            stack: vec![Frame::Home {
+                menu: Menu::new(
+                    vec![
+                        MenuItem::new("Open".into(), Action::Browse),
+                        MenuItem::new("Shut down".into(), Action::Shutdown),
+                    ],
+                    0,
+                ),
+            }],
             mode: Mode::Scanning,
             player,
             notice: None,
             scan_status: String::new(),
             scan_rx: Some(scan_rx),
             last_pos_save: Instant::now(),
+            root_selection: None,
         }
     }
 
@@ -94,7 +112,7 @@ impl App {
             .filter_map(|frame| match frame {
                 Frame::Dir { name, .. } => name.clone(),
                 Frame::Video { name, .. } => Some(name.clone()),
-                Frame::Tracks { .. } => None,
+                Frame::Home { .. } | Frame::Tracks { .. } => None,
             })
             .collect()
     }
@@ -127,7 +145,8 @@ impl App {
 
     pub fn title(&self) -> &str {
         match self.stack.last().unwrap() {
-            Frame::Dir { name: None, .. } => "tiny media center",
+            Frame::Home { .. } => "tiny media center",
+            Frame::Dir { name: None, .. } => "Open",
             Frame::Dir { name: Some(name), .. } => name,
             Frame::Video { name, .. } => media::strip_extension(name),
             Frame::Tracks { kind, .. } => kind.as_str(),
@@ -139,6 +158,13 @@ impl App {
         items.iter().position(|i| matches!(&i.action, Action::Open(m) if m == name))
     }
 
+    // File name of the selected directory item.
+    fn selected_name(menu: &Menu<Action>) -> Option<String> {
+        match &menu.items.get(menu.selected)?.action {
+            Action::Open(name) => Some(name.clone()),
+            _ => None,
+        }
+    }
     // Item construction + sort: in-progress videos first, then unwatched,
     // then watched (dimmed), case-insensitively alphabetical within each
     // group. Jump-to-letter goes by the name, not the "* " progress prefix.
@@ -249,6 +275,25 @@ impl App {
                 self.stack.push(Frame::Tracks { kind, menu });
             }
             Action::SelectTrack(kind, id) => self.select_track(kind, id),
+            Action::Browse => {
+                let items = Self::directory_items(&self.tree);
+                let selected = self
+                    .root_selection
+                    .as_ref()
+                    .and_then(|n| Self::item_index(&items, n))
+                    .unwrap_or(0);
+                self.stack.push(Frame::Dir { name: None, menu: Menu::new(items, selected) });
+            }
+            // systemctl only queues the poweroff job, so this doesn't block.
+            Action::Shutdown => {
+                let message = match Command::new("systemctl").arg("poweroff").output() {
+                    Ok(out) if out.status.success() => "Shutting down...".into(),
+                    Ok(out) => format!("shut down: {}", String::from_utf8_lossy(&out.stderr).trim()),
+                    Err(e) => format!("shut down: {e}"),
+                };
+                eprintln!("tiny-media-center: {message}");
+                self.notice = Some((message, Instant::now()));
+            }
         }
     }
 
@@ -342,7 +387,9 @@ impl App {
             // Backing out of the paused video menu closes the player.
             Some(Frame::Video { .. }) => self.close_player(),
             _ if self.stack.len() > 1 => {
-                self.stack.pop();
+                if let Some(Frame::Dir { name: None, menu }) = self.stack.pop() {
+                    self.root_selection = Self::selected_name(&menu);
+                }
                 self.menu().reset_scroll();
             }
             _ => {}
@@ -412,11 +459,7 @@ impl App {
                 Ok(ScanMsg::Entry { parts, kind, meta }) => {
                     media::insert(&mut self.tree, parts, kind, meta);
                 }
-                Ok(ScanMsg::WalkDone) => {
-                    let items = Self::directory_items(&self.tree);
-                    self.menu().set_items(items, 0);
-                    self.mode = Mode::Browse;
-                }
+                Ok(ScanMsg::WalkDone) => self.mode = Mode::Browse,
                 Ok(ScanMsg::Probed { parts, result }) => {
                     if let Some(node) = media::get_node_mut(&mut self.tree, &parts) {
                         node.meta.apply_probe(&result);
@@ -448,11 +491,7 @@ impl App {
         let Some(node) = media::get_node(&self.tree, &path) else { return };
         let items = Self::directory_items(node);
         let menu = self.menu();
-        let selected_name = menu.items.get(menu.selected).and_then(|i| match &i.action {
-            Action::Open(name) => Some(name.clone()),
-            _ => None,
-        });
-        let selected = selected_name
+        let selected = Self::selected_name(menu)
             .and_then(|n| Self::item_index(&items, &n))
             .unwrap_or_else(|| menu.selected.min(items.len().saturating_sub(1)));
         menu.update_items(items, selected);
