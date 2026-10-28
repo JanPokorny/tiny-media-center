@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1090,SC2164
+# shellcheck disable=SC1090,SC1091,SC2164
 # The whole X session of the TV box: started by startx from tmc-session.service
 # (see README), with tiny-media-center as window manager and UI.
+
+# Login environment (profile.d: LANG, flatpak XDG_DATA_DIRS, Steam vars), as GDM's
+# Xsession provided.
+. /etc/profile
 
 # What Fedora's xinitrc does: hand DISPLAY to the user manager and D-Bus
 # activation, xhost the local user.
