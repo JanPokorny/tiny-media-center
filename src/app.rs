@@ -99,13 +99,13 @@ pub struct App {
     last_pos_save: Instant,
     // Selected item of the media root, kept across leaving it for Home.
     root_selection: Option<String>,
-    // Other apps' windows, as last reported by the X watcher thread.
+    // Other apps' windows, as last reported by the window manager thread.
     windows: Vec<Win>,
     windows_rx: Receiver<Vec<Win>>,
 }
 
 impl App {
-    pub fn new(config: Config, player: Player, scan_rx: Receiver<ScanMsg>) -> App {
+    pub fn new(config: Config, player: Player, scan_rx: Receiver<ScanMsg>, windows_rx: Receiver<Vec<Win>>) -> App {
         App {
             config,
             tree: Node::default(),
@@ -119,7 +119,7 @@ impl App {
             last_pos_save: Instant::now(),
             root_selection: None,
             windows: vec![],
-            windows_rx: windows::watch(),
+            windows_rx,
         }
     }
 
@@ -624,7 +624,7 @@ impl App {
         menu.update_items(items, selected);
     }
 
-    // Take the latest window list from the X watcher; leave window frames
+    // Take the latest window list from the window manager; leave window frames
     // whose window (or whole list) went away, and keep the selection.
     pub fn pump_windows(&mut self) {
         let Some(windows) = self.windows_rx.try_iter().last() else { return };

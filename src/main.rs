@@ -93,11 +93,9 @@ extern "C" fn x_io_error(_display: *mut std::ffi::c_void) -> i32 {
 }
 
 fn main() {
-    // Used by the Home key binding (Openbox owns the key).
-    if std::env::args().nth(1).as_deref() == Some("--raise") {
-        return windows::raise_own();
-    }
     unsafe { XSetIOErrorHandler(x_io_error) };
+    // Before SDL looks for a window manager and maps its window.
+    let windows = windows::start();
     let config = config::load();
     input::watch_controller_chord();
 
@@ -142,7 +140,7 @@ fn main() {
 
     let (tx, rx) = channel();
     media::spawn_scan(config.media_path.clone(), config.subtitles.clone(), tx);
-    let mut app = App::new(config, player, rx);
+    let mut app = App::new(config, player, rx, windows);
 
     let (w, h) = window.size();
     let mut background = Background::new(w as f32, h as f32);
