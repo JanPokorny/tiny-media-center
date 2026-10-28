@@ -74,6 +74,7 @@ fn draw_progress<R: Renderer>(
 
 fn main() {
     let config = config::load();
+    input::watch_controller_chord();
 
     // Write the embedded mpv attachment files to the config dir. mpv.conf is
     // only written when missing, so user edits to it survive restarts; the

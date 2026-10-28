@@ -57,17 +57,10 @@
 </desktops>
 
 <keyboard>
-  <!-- Home: bring the media center to the front -->
+  <!-- Home: bring the media center to the front (on a Steam Controller
+       without Steam, hold View+Menu; the app watches for that itself) -->
   <keybind key="XF86HomePage">
     <action name="Execute"><command>wmctrl -x -a tiny-media-center</command></action>
-  </keybind>
-
-  <!-- Context: close the foreground app, unless it's the media center -->
-  <keybind key="Menu">
-    <action name="If">
-      <query target="default"><class>tiny-media-center</class></query>
-      <else><action name="Close"/></else>
-    </action>
   </keybind>
 
   <keybind key="A-Tab">
