@@ -2,7 +2,8 @@
 // windows fill the screen, dialogs are centered, and the top of the stack
 // has the input focus. It also reports the other windows to the app for the
 // Running menu. Only what Steam, Dolphin, VacuumTube and SteamLink need is
-// implemented: no WM_STATE, WM_TAKE_FOCUS, desktops or frame extents.
+// implemented: no iconic state, desktops or frame extents. WM_STATE and
+// WM_TAKE_FOCUS are for Proton: without them its windows never hide or activate.
 
 use std::iter::successors;
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
@@ -27,6 +28,8 @@ x11rb::atom_manager! {
         UTF8_STRING,
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
+        WM_TAKE_FOCUS,
+        WM_STATE,
         _NET_SUPPORTED,
         _NET_SUPPORTING_WM_CHECK,
         _NET_CLIENT_LIST,
@@ -268,6 +271,8 @@ impl Wm {
         ];
         let kind = classify(&types, parent.is_some(), &kinds);
         if kind == Kind::Ignore {
+            // Above the managed windows, which a sync put on top since it was last mapped.
+            x.conn.configure_window(window, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE))?;
             x.conn.map_window(window)?;
             return Ok(());
         }
@@ -278,6 +283,7 @@ impl Wm {
         x.conn.change_window_attributes(window, &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE))?;
         let client = Client { id: window, kind, parent, title: x.title(window) };
         self.place(&client)?;
+        x.conn.change_property32(PropMode::REPLACE, window, a.WM_STATE, a.WM_STATE, &[1, NONE])?; // NormalState
         x.conn.map_window(window)?;
         self.clients.push(client);
         self.stack.push(window);
@@ -290,6 +296,8 @@ impl Wm {
         if !self.clients.iter().any(|c| c.id == window) {
             return Ok(());
         }
+        // Withdrawn; a BadWindow if it was destroyed.
+        self.x.conn.delete_property(window, self.x.atoms.WM_STATE)?;
         self.clients.retain(|c| c.id != window);
         self.stack.retain(|&w| w != window);
         self.send_list();
@@ -331,6 +339,10 @@ impl Wm {
         x.conn.change_property32(PropMode::REPLACE, x.root, a._NET_ACTIVE_WINDOW, AtomEnum::WINDOW, &[top])?;
         if top != NONE {
             x.conn.set_input_focus(InputFocus::POINTER_ROOT, top, CURRENT_TIME)?;
+            if x.atoms_of(top, a.WM_PROTOCOLS, AtomEnum::ATOM).contains(&a.WM_TAKE_FOCUS) {
+                let event = ClientMessageEvent::new(32, top, a.WM_PROTOCOLS, [a.WM_TAKE_FOCUS, CURRENT_TIME, 0, 0, 0]);
+                x.conn.send_event(false, top, EventMask::NO_EVENT, event)?;
+            }
         }
         Ok(())
     }
