@@ -65,6 +65,11 @@ pub struct Meta {
     // subliminal) on every launch. Delete the .tmc to force a retry.
     #[serde(default, skip_serializing_if = "is_false")]
     pub probe_failed: bool,
+    // English subtitles are settled: the file has them, one was downloaded,
+    // or no provider has any. Unset after transient failures (offline, out
+    // of quota), so the next scan retries.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub subs_done: bool,
     #[serde(flatten)]
     pub tracks: BTreeMap<String, String>,
 }
@@ -124,7 +129,11 @@ impl Meta {
                 self.tracks = tracks.clone();
                 self.probe_failed = false;
             }
-            None => self.probe_failed = true,
+            // A file that probed fine before keeps its data through a
+            // transient failure (slow disk, timeout) instead of being
+            // written off for good.
+            None if self.duration.is_none() => self.probe_failed = true,
+            None => {}
         }
     }
 
@@ -251,7 +260,7 @@ pub enum ScanMsg {
     // The walk finished: the whole tree is browsable (probes continue).
     WalkDone,
     // Probe results for one video, arriving after WalkDone.
-    Probed { parts: Vec<String>, result: Option<(f64, BTreeMap<String, String>)> },
+    Probed { parts: Vec<String>, result: Option<(f64, BTreeMap<String, String>)>, subs_done: bool },
     Done,
 }
 
@@ -266,10 +275,11 @@ pub fn insert(root: &mut Node, parts: Vec<String>, kind: Kind, meta: Meta) {
 
 // The background scan. Pass 1 walks the media dir and streams entries with
 // whatever metadata the sidecars already hold -- the UI becomes browsable as
-// soon as that finishes. Pass 2 then handles videos never probed before:
-// subliminal downloads subtitles *first*, so the mpv preflight probe that
-// follows sees them in its track-list.
-pub fn spawn_scan(media_path: String, tx: Sender<ScanMsg>) {
+// soon as that finishes. Pass 2 then handles videos never probed, or without
+// settled English subtitles: the mpv preflight probe lists the tracks, and
+// if there's no English subtitle among them one is downloaded and the file
+// re-probed so the new track shows up.
+pub fn spawn_scan(media_path: String, subtitles: crate::config::Subtitles, tx: Sender<ScanMsg>) {
     std::thread::spawn(move || {
         let mut pending: Vec<Vec<String>> = vec![];
         for entry in walkdir::WalkDir::new(&media_path)
@@ -295,7 +305,7 @@ pub fn spawn_scan(media_path: String, tx: Sender<ScanMsg>) {
             let mut meta = Meta::default();
             if kind == Kind::Video {
                 meta = load_metadata(&media_path, &parts);
-                if meta.duration.is_none() && !meta.probe_failed {
+                if !meta.probe_failed && (meta.duration.is_none() || !meta.subs_done) {
                     pending.push(parts.clone());
                 }
             }
@@ -304,20 +314,40 @@ pub fn spawn_scan(media_path: String, tx: Sender<ScanMsg>) {
         let _ = tx.send(ScanMsg::WalkDone);
 
         let mut probe_mpv = None;
+        let mut fetcher = crate::subtitles::Fetcher::new(subtitles);
         for parts in pending {
             let rel = parts.join("/");
             let full = format!("{media_path}/{rel}");
-            let _ = tx.send(ScanMsg::Status(rel));
-            let _ = std::process::Command::new("subliminal")
-                .args(["download", "-l", "en", "-HI", "-FO", &full])
-                .status();
-            let result = crate::player::probe(&mut probe_mpv, &full);
+            let _ = tx.send(ScanMsg::Status(rel.clone()));
+            let mut result = crate::player::probe(&mut probe_mpv, &full);
+            let mut subs_done = false;
+            if let Some((_, tracks)) = &result {
+                // Forced-only / signs & songs tracks don't count: they leave
+                // most of the dialogue untranslated.
+                let has_english = tracks.iter().any(|(key, label)| {
+                    key.starts_with("track_sub_") && is_english(label) && track_rank(label, false).is_some_and(|r| r < 3)
+                });
+                // .mp3 files are in the video list too, but have nothing to subtitle.
+                subs_done = has_english || rel.ends_with(".mp3");
+                if !subs_done {
+                    match fetcher.fetch(std::path::Path::new(&full)) {
+                        Ok(downloaded) => {
+                            subs_done = true;
+                            if downloaded {
+                                result = crate::player::probe(&mut probe_mpv, &full);
+                            }
+                        }
+                        Err(e) => eprintln!("tiny-media-center: subtitles for {rel}: {e}"),
+                    }
+                }
+            }
             // Re-read the sidecar before writing: the user may have started
             // watching this video (saving a position) while this pass ran.
             let mut meta = load_metadata(&media_path, &parts);
             meta.apply_probe(&result);
+            meta.subs_done = subs_done;
             save_metadata(&media_path, &parts, &meta);
-            let _ = tx.send(ScanMsg::Probed { parts, result });
+            let _ = tx.send(ScanMsg::Probed { parts, result, subs_done });
         }
         let _ = tx.send(ScanMsg::Done);
     });

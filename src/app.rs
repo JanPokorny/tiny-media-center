@@ -582,9 +582,12 @@ impl App {
                     media::insert(&mut self.tree, parts, kind, meta);
                 }
                 Ok(ScanMsg::WalkDone) => self.mode = Mode::Browse,
-                Ok(ScanMsg::Probed { parts, result }) => {
+                Ok(ScanMsg::Probed { parts, result, subs_done }) => {
+                    // Mirror what the scan saved, so later saves from here
+                    // (position, track picks) don't write stale values back.
                     if let Some(node) = media::get_node_mut(&mut self.tree, &parts) {
                         node.meta.apply_probe(&result);
+                        node.meta.subs_done = subs_done;
                     }
                     refresh = true;
                 }

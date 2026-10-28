@@ -13,6 +13,7 @@ serde = { version = "1", features = ["derive"] }
 walkdir = "2"
 fastrand = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+ureq = { version = "3", features = ["json"] }
 
 [features]
 # SDL3 is statically linked from source by default, since most distros don't

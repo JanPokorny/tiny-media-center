@@ -36,16 +36,28 @@ impl Default for Style {
     }
 }
 
+// Subtitle downloads (see subtitles.rs). OpenSubtitles needs an API key
+// (opensubtitles.com profile > API consumers); the account is optional and
+// raises the daily download limit from 5 to 20.
+#[derive(Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct Subtitles {
+    pub opensubtitles_api_key: String,
+    pub opensubtitles_username: String,
+    pub opensubtitles_password: String,
+}
+
 #[derive(Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub media_path: String,
     pub style: Style,
+    pub subtitles: Subtitles,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { media_path: ".".into(), style: Style::default() }
+        Config { media_path: ".".into(), style: Style::default(), subtitles: Subtitles::default() }
     }
 }
 

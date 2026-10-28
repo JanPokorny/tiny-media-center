@@ -9,6 +9,7 @@ mod input;
 mod media;
 mod menu;
 mod player;
+mod subtitles;
 
 use app::{App, Mode};
 use background::Background;
@@ -116,7 +117,7 @@ fn main() {
     let player = Player::new(&video, &mpv_dir.to_string_lossy()).expect("mpv");
 
     let (tx, rx) = channel();
-    media::spawn_scan(config.media_path.clone(), tx);
+    media::spawn_scan(config.media_path.clone(), config.subtitles.clone(), tx);
     let mut app = App::new(config, player, rx);
 
     let (w, h) = window.size();
