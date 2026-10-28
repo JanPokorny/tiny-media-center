@@ -60,7 +60,7 @@
   <!-- Home: bring the media center to the front (on a Steam Controller
        without Steam, hold View+Menu; the app watches for that itself) -->
   <keybind key="XF86HomePage">
-    <action name="Execute"><command>wmctrl -x -a tiny-media-center</command></action>
+    <action name="Execute"><command>~/ghq/github.com/JanPokorny/tiny-media-center/target/release/tiny-media-center --raise</command></action>
   </keybind>
 
   <keybind key="A-Tab">

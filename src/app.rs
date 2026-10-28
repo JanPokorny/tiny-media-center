@@ -8,6 +8,7 @@ use crate::input::Input;
 use crate::media::{self, Kind, Node, ScanMsg, TrackKind};
 use crate::menu::{Menu, MenuItem};
 use crate::player::Player;
+use crate::windows::{self, Win, Window};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
@@ -24,8 +25,11 @@ pub enum Action {
     // The device, and whether it needs pairing first.
     ConnectBt(BtDevice, bool),
     PairNew,
-    // Raise another app's window by its X window id.
-    Activate(String),
+    // The list of other apps' windows, one of them, and what to do to it.
+    Running,
+    Window(Window),
+    Focus(Window),
+    Close(Window),
     Shutdown,
 }
 
@@ -39,6 +43,9 @@ pub enum Frame {
     Audio { menu: Menu<Action> },
     // Bluetooth discovery runs while this is on the stack.
     Pair { menu: Menu<Action>, scan: Discovery },
+    Running { menu: Menu<Action> },
+    // Titled after the window, which can change while this is open.
+    Window { id: Window, menu: Menu<Action> },
 }
 
 impl Frame {
@@ -49,7 +56,9 @@ impl Frame {
             | Frame::Video { menu, .. }
             | Frame::Tracks { menu, .. }
             | Frame::Audio { menu }
-            | Frame::Pair { menu, .. } => menu,
+            | Frame::Pair { menu, .. }
+            | Frame::Running { menu }
+            | Frame::Window { menu, .. } => menu,
         }
     }
 }
@@ -90,6 +99,9 @@ pub struct App {
     last_pos_save: Instant,
     // Selected item of the media root, kept across leaving it for Home.
     root_selection: Option<String>,
+    // Other apps' windows, as last reported by the X watcher thread.
+    windows: Vec<Win>,
+    windows_rx: Receiver<Vec<Win>>,
 }
 
 impl App {
@@ -97,7 +109,7 @@ impl App {
         App {
             config,
             tree: Node::default(),
-            stack: vec![Frame::Home { menu: Menu::new(Self::home_items(), 0) }],
+            stack: vec![Frame::Home { menu: Menu::new(Self::home_items(&[]), 0) }],
             mode: Mode::Scanning,
             player,
             notice: None,
@@ -106,6 +118,8 @@ impl App {
             launch_errors: channel(),
             last_pos_save: Instant::now(),
             root_selection: None,
+            windows: vec![],
+            windows_rx: windows::watch(),
         }
     }
 
@@ -120,9 +134,12 @@ impl App {
             .filter_map(|frame| match frame {
                 Frame::Dir { name, .. } => name.clone(),
                 Frame::Video { name, .. } => Some(name.clone()),
-                Frame::Home { .. } | Frame::Tracks { .. } | Frame::Audio { .. } | Frame::Pair { .. } => {
-                    None
-                }
+                Frame::Home { .. }
+                | Frame::Tracks { .. }
+                | Frame::Audio { .. }
+                | Frame::Pair { .. }
+                | Frame::Running { .. }
+                | Frame::Window { .. } => None,
             })
             .collect()
     }
@@ -162,6 +179,8 @@ impl App {
             Frame::Tracks { kind, .. } => kind.as_str(),
             Frame::Audio { .. } => "Audio",
             Frame::Pair { .. } => "Pair new (searching...)",
+            Frame::Running { .. } => "Running",
+            Frame::Window { id, .. } => self.windows.iter().find(|w| w.id == *id).map_or("", |w| &w.title),
         }
     }
 
@@ -170,44 +189,33 @@ impl App {
         items.iter().position(|i| matches!(&i.action, Action::Open(m) if m == name))
     }
 
-    // Open / Back to <window> per other app window / Audio [current output]
+    // Open / Running (when other apps have windows) / Audio [current output]
     // / Shut down.
-    fn home_items() -> Vec<MenuItem<Action>> {
+    fn home_items(windows: &[Win]) -> Vec<MenuItem<Action>> {
         let default = audio::default_sink();
         let audio = match audio::sinks().into_iter().find(|s| s.name == default) {
             Some(sink) => format!("Audio [{}]", sink.description),
             None => "Audio".into(),
         };
         let mut items = vec![MenuItem::new("Open".into(), Action::Browse)];
-        items.extend(
-            Self::other_windows()
-                .into_iter()
-                .map(|(id, title)| MenuItem::new(format!("Back to {title}"), Action::Activate(id))),
-        );
+        if !windows.is_empty() {
+            items.push(MenuItem::new("Running".into(), Action::Running));
+        }
         items.push(MenuItem::new(audio, Action::Audio));
         items.push(MenuItem::new("Shut down".into(), Action::Shutdown));
         items
     }
 
-    // (window id, title) of every window the WM manages except our own.
-    fn other_windows() -> Vec<(String, String)> {
-        let Ok(out) = Command::new("wmctrl").arg("-lx").stderr(Stdio::null()).output() else {
-            return vec![];
-        };
-        String::from_utf8_lossy(&out.stdout).lines().filter_map(Self::parse_wmctrl_line).collect()
+    fn running_items(windows: &[Win]) -> Vec<MenuItem<Action>> {
+        windows.iter().map(|w| MenuItem::new(w.title.clone(), Action::Window(w.id))).collect()
     }
 
-    // `wmctrl -lx` line: id, desktop, WM_CLASS, host, then the title, with
-    // the first four columns space-padded.
-    fn parse_wmctrl_line(line: &str) -> Option<(String, String)> {
-        let mut rest = line;
-        let mut cols = [""; 4];
-        for col in &mut cols {
-            rest = rest.trim_start();
-            (*col, rest) = rest.split_at(rest.find(char::is_whitespace)?);
-        }
-        let [id, _, class, _] = cols;
-        (class != "tiny-media-center.tiny-media-center").then(|| (id.into(), rest.trim().into()))
+    // Replace a menu's items keeping the selection by action: items come and
+    // go, and an index could slide onto Shut down.
+    fn keep_selection(menu: &mut Menu<Action>, items: Vec<MenuItem<Action>>) {
+        let action = menu.items.get(menu.selected).map(|i| &i.action);
+        let selected = items.iter().position(|i| Some(&i.action) == action).unwrap_or(0);
+        menu.update_items(items, selected);
     }
 
     // Current outputs (the default selected), then paired but disconnected
@@ -228,13 +236,8 @@ impl App {
     }
 
     pub fn refresh_home(&mut self) {
-        // Keep the selection by action: the window items come and go, and an
-        // index could slide onto Shut down.
         if let [Frame::Home { menu }] = self.stack.as_mut_slice() {
-            let items = Self::home_items();
-            let action = menu.items.get(menu.selected).map(|i| &i.action);
-            let selected = items.iter().position(|i| Some(&i.action) == action).unwrap_or(0);
-            menu.update_items(items, selected);
+            Self::keep_selection(menu, Self::home_items(&self.windows));
         }
     }
 
@@ -386,10 +389,19 @@ impl App {
                 let text = format!("Connecting to {}...", device.name);
                 self.run_task(text, move || audio::connect(&device, pair));
             }
-            Action::Activate(id) => {
-                if let Err(e) = Command::new("wmctrl").args(["-i", "-a", &id]).status() {
-                    self.show_notice(format!("wmctrl: {e}"));
-                }
+            Action::Running => {
+                let menu = Menu::new(Self::running_items(&self.windows), 0);
+                self.stack.push(Frame::Running { menu });
+            }
+            Action::Window(id) => {
+                let items = vec![MenuItem::new("Focus".into(), Action::Focus(id)), MenuItem::new("Close".into(), Action::Close(id))];
+                self.stack.push(Frame::Window { id, menu: Menu::new(items, 0) });
+            }
+            Action::Focus(id) => windows::activate(id),
+            Action::Close(id) => {
+                windows::close(id);
+                self.stack.pop();
+                self.menu().reset_scroll();
             }
             Action::PairNew => {
                 match audio::discover() {
@@ -624,6 +636,33 @@ impl App {
         menu.update_items(items, selected);
     }
 
+    // Take the latest window list from the X watcher; leave window frames
+    // whose window (or whole list) went away, and keep the selection.
+    pub fn pump_windows(&mut self) {
+        let Some(windows) = self.windows_rx.try_iter().last() else { return };
+        self.windows = windows;
+        let windows = &self.windows;
+        let mut popped = false;
+        while self
+            .stack
+            .pop_if(|f| match f {
+                Frame::Window { id, .. } => !windows.iter().any(|w| w.id == *id),
+                Frame::Running { .. } => windows.is_empty(),
+                _ => false,
+            })
+            .is_some()
+        {
+            popped = true;
+        }
+        if let Some(Frame::Running { menu }) = self.stack.last_mut() {
+            Self::keep_selection(menu, Self::running_items(windows));
+        }
+        if popped {
+            self.menu().reset_scroll();
+        }
+        self.refresh_home();
+    }
+
     // Check on a running external command; surface its failure if any.
     pub fn pump_external(&mut self) {
         while let Ok(message) = self.launch_errors.1.try_recv() {
@@ -698,13 +737,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_wmctrl_lines() {
-        let line = "0x02200003  0 steam.Steam           tv Steam  Big  Picture";
-        assert_eq!(App::parse_wmctrl_line(line), Some(("0x02200003".into(), "Steam  Big  Picture".into())));
-        let own = "0x00800034  0 tiny-media-center.tiny-media-center  tv tiny media center";
-        assert_eq!(App::parse_wmctrl_line(own), None);
-        assert_eq!(App::parse_wmctrl_line("0x1 0 tv.tv tv"), None); // no title
+    fn keep_selection_follows_window_not_index() {
+        let win = |id, title: &str| Win { id, title: title.into() };
+        let mut menu = Menu::new(App::running_items(&[win(1, "a"), win(2, "b"), win(3, "c")]), 1);
+        App::keep_selection(&mut menu, App::running_items(&[win(0, "z"), win(2, "b2"), win(3, "c")]));
+        assert_eq!(menu.selected, 1);
+        App::keep_selection(&mut menu, App::running_items(&[win(3, "c")]));
+        assert_eq!(menu.selected, 0); // selected window gone: first item
     }
+
     #[test]
     fn video_items_show_current_tracks() {
         let mut node = video(Some(100.0), None);

@@ -33,9 +33,8 @@ $sudo dnf install -y \
 
 echo "== installing runtime dependencies (sudo dnf)"
 # mpv-libs (libmpv.so.2, the embedded player) already comes with the mpv
-# headers above; wmctrl, pactl and bluetoothctl back the window list and
-# audio output menu.
-$sudo dnf install -y mpv-libs wmctrl pulseaudio-utils bluez
+# headers above; pactl and bluetoothctl back the audio output menu.
+$sudo dnf install -y mpv-libs pulseaudio-utils bluez
 # dolphin-emu launches Wii games; it lives in RPM Fusion free, so skip it
 # with a warning when that repo isn't enabled.
 if ! $sudo dnf install -y dolphin-emu; then

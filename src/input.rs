@@ -10,7 +10,6 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -95,7 +94,7 @@ fn read_chords(path: &Path) -> std::io::Result<()> {
         let code = u16::from_ne_bytes([ev[18], ev[19]]);
         let value = i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]);
         if kind == EV_KEY && chord_step(&mut held, code, value) {
-            let _ = Command::new("wmctrl").args(["-x", "-a", "tiny-media-center"]).status();
+            crate::windows::raise_own();
         }
     }
 }
