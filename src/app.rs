@@ -165,11 +165,11 @@ impl App {
             _ => None,
         }
     }
-    // Item construction + sort: in-progress videos first, then unwatched,
-    // then watched (dimmed), case-insensitively alphabetical within each
+    // Item construction + sort: in-progress videos first, then everything
+    // else (watched ones dimmed), case-insensitively alphabetical within each
     // group. Jump-to-letter goes by the name, not the "* " progress prefix.
     fn directory_items(node: &Node) -> Vec<MenuItem<Action>> {
-        let mut items: Vec<(i32, MenuItem<Action>)> = node
+        let mut items: Vec<(bool, MenuItem<Action>)> = node
             .children
             .iter()
             .map(|(name, child)| {
@@ -181,13 +181,13 @@ impl App {
                 // watch_pct is 0 for anything that isn't a video, so pct > 0
                 // alone identifies (partially) watched videos.
                 let pct = media::watch_pct(child);
-                let category = if pct == 0 { 2 } else if pct < 100 { 1 } else { 3 };
+                let in_progress = pct > 0 && pct < 100;
                 let jump = display.to_lowercase();
-                let label = if category == 1 { format!("* {display}") } else { display };
+                let label = if in_progress { format!("* {display}") } else { display };
                 let mut item = MenuItem::new(label, Action::Open(name.clone()));
                 item.jump = jump;
-                item.dim = category == 3;
-                (category, item)
+                item.dim = pct >= 100;
+                (!in_progress, item)
             })
             .collect();
         items.sort_by(|(ac, a), (bc, b)| (ac, &a.jump).cmp(&(bc, &b.jump)));
@@ -531,21 +531,21 @@ mod tests {
     fn directory_items_grouping_and_sort() {
         let mut dir = Node::default();
         // Watched (100%), in-progress (50%), unwatched, and a directory.
-        dir.children.insert("Zebra.mp4".into(), video(Some(100.0), Some(99.0)));
+        dir.children.insert("Delta.mp4".into(), video(Some(100.0), Some(99.0)));
         dir.children.insert("beta.mp4".into(), video(Some(100.0), Some(50.0)));
         dir.children.insert("Alpha.mp4".into(), video(None, None));
         dir.children.insert("shows".into(), Node::default());
 
         let items = App::directory_items(&dir);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        // In-progress first (starred), then unwatched (case-insensitively
-        // sorted: Alpha before shows), watched (dimmed) last.
-        assert_eq!(labels, ["* beta", "Alpha", "shows", "Zebra"]);
-        assert!(items[3].dim);
+        // In-progress first (starred), then the rest case-insensitively
+        // sorted (Alpha before shows), watched dimmed but not moved.
+        assert_eq!(labels, ["* beta", "Alpha", "Delta", "shows"]);
+        assert!(items[2].dim);
         assert!(!items[0].dim);
         // Jump keys ignore the "* " prefix and case.
         assert_eq!(items[0].jump, "beta");
-        assert_eq!(items[3].jump, "zebra");
+        assert_eq!(items[2].jump, "delta");
     }
 
     #[test]
