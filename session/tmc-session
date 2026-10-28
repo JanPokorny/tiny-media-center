@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1090,SC2164
+# The whole X session of the TV box: started by startx from tmc-session.service
+# (see README), with tiny-media-center as window manager and UI.
+
+# What Fedora's xinitrc does: hand DISPLAY to the user manager and D-Bus
+# activation, xhost the local user.
+for f in /etc/X11/xinit/xinitrc.d/?*.sh; do . "$f"; done
+
+# TV UI scaling (must run before apps launch)
+xrdb -merge ~/.Xresources
+
+# Children must not outlive the session; xinit HUPs us when X goes away.
+trap 'kill $(jobs -p) 2>/dev/null' EXIT
+trap exit HUP INT TERM
+
+# Compositor: fixes black/white artifacts behind menu rounded corners
+# and shadows, enables transparency; vsync prevents video tearing
+picom --backend glx --vsync &
+# Notification daemon (used for the volume popup)
+dunst &
+# Bluetooth tray applet (pairing dialogs, auto-connect)
+blueman-applet &
+
+# tmc _exit(1)s when X goes away, so check X before each restart; the sleep
+# keeps an instantly crashing tmc from spinning.
+cd /media
+while xprop -root >/dev/null 2>&1; do
+    ~/ghq/github.com/JanPokorny/tiny-media-center/target/release/tiny-media-center
+    sleep 1
+done
