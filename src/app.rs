@@ -640,6 +640,7 @@ impl App {
     // whose window (or whole list) went away, and keep the selection.
     pub fn pump_windows(&mut self) {
         let Some(windows) = self.windows_rx.try_iter().last() else { return };
+        let was_empty = self.windows.is_empty();
         self.windows = windows;
         let windows = &self.windows;
         let mut popped = false;
@@ -654,13 +655,20 @@ impl App {
         {
             popped = true;
         }
-        if let Some(Frame::Running { menu }) = self.stack.last_mut() {
+        let running = self.stack.iter_mut().find_map(|f| match f {
+            Frame::Running { menu } => Some(menu),
+            _ => None,
+        });
+        if let Some(menu) = running {
             Self::keep_selection(menu, Self::running_items(windows));
         }
         if popped {
             self.menu().reset_scroll();
         }
-        self.refresh_home();
+        // Home only shows whether there are windows, and rebuilding it runs pactl.
+        if was_empty != self.windows.is_empty() {
+            self.refresh_home();
+        }
     }
 
     // Check on a running external command; surface its failure if any.

@@ -18,7 +18,7 @@ use config::color;
 use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, Paint, Path, Renderer};
 use menu::text_width;
 use player::Player;
-use sdl3::event::Event;
+use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::{Keycode, Mod};
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
@@ -175,6 +175,8 @@ fn main() {
                     let err = std::process::Command::new(exe).exec();
                     panic!("restart failed: {err}");
                 }
+                // Coming back from another app: the audio output may have changed.
+                Event::Window { win_event: WindowEvent::FocusGained, .. } => app.refresh_home(),
                 _ if busy => {}
                 Event::MouseWheel { y, .. } if !playing => {
                     // One wheel notch (y = ±1) per menu step; the buffer

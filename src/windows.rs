@@ -41,10 +41,15 @@ fn class_of(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes.split(|&b| b == 0).nth(1).unwrap_or_default()).into()
 }
 
-// Prefer the UTF-8 EWMH name; the legacy one is only decoded as UTF-8 too,
-// which is lossy for old Latin-1 clients.
-fn decode_title(net: &[u8], legacy: &[u8]) -> String {
-    String::from_utf8_lossy(if net.is_empty() { legacy } else { net }).into()
+// Prefer the UTF-8 EWMH name; the legacy one is Latin-1 when its type is STRING.
+fn decode_title(net: &[u8], legacy: &[u8], legacy_latin1: bool) -> String {
+    if !net.is_empty() {
+        String::from_utf8_lossy(net).into()
+    } else if legacy_latin1 {
+        legacy.iter().map(|&b| b as char).collect()
+    } else {
+        String::from_utf8_lossy(legacy).into()
+    }
 }
 
 struct X {
@@ -90,7 +95,7 @@ impl X {
             .filter_map(|&id| {
                 let net = self.property(id, self.atoms._NET_WM_NAME, self.atoms.UTF8_STRING)?;
                 let legacy = self.property(id, AtomEnum::WM_NAME, AtomEnum::ANY)?;
-                let title = decode_title(&net.value, &legacy.value);
+                let title = decode_title(&net.value, &legacy.value, legacy.type_ == u32::from(AtomEnum::STRING));
                 (!title.is_empty()).then_some(Win { id, title })
             })
             .collect()
@@ -149,7 +154,11 @@ pub fn watch() -> Receiver<Vec<Win>> {
             }
             loop {
                 match x.conn.wait_for_event() {
-                    Ok(Event::PropertyNotify(e)) if watched.contains(&e.atom) => break,
+                    Ok(Event::PropertyNotify(e)) if watched.contains(&e.atom) => {
+                        // A burst of changes costs one relist.
+                        while let Ok(Some(_)) = x.conn.poll_for_event() {}
+                        break;
+                    }
                     Ok(_) => {}
                     Err(_) => return,
                 }
@@ -168,7 +177,9 @@ mod tests {
         assert_eq!(class_of(b"steam\0Steam\0"), "Steam");
         assert_eq!(class_of(b"tiny-media-center\0tiny-media-center\0"), OWN_CLASS);
         assert_eq!(class_of(b""), "");
-        assert_eq!(decode_title("Čaj".as_bytes(), b"legacy"), "Čaj");
-        assert_eq!(decode_title(b"", b"legacy"), "legacy");
+        assert_eq!(decode_title("Čaj".as_bytes(), b"legacy", true), "Čaj");
+        assert_eq!(decode_title(b"", b"legacy", true), "legacy");
+        assert_eq!(decode_title(b"", b"caf\xe9", true), "café"); // Latin-1
+        assert_eq!(decode_title(b"", "café".as_bytes(), false), "café"); // UTF8_STRING / compound
     }
 }
