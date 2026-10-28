@@ -282,7 +282,7 @@ impl App {
     fn video_items(video: &Node) -> Vec<MenuItem<Action>> {
         let meta = &video.meta;
         let label = |base: &str, kind| {
-            let current = match meta.selection(kind) {
+            let current = match meta.effective_selection(kind).as_deref() {
                 Some("") => Some("none"), // subtitles off
                 Some(id) => meta.track_label(kind, id),
                 None => None,
@@ -355,8 +355,13 @@ impl App {
             }
             Action::Tracks(kind) => {
                 let Some(video) = self.video_node() else { return };
-                let menu = Menu::new(Self::track_items(video, kind), 0);
-                self.stack.push(Frame::Tracks { kind, menu });
+                let items = Self::track_items(video, kind);
+                let current = video.meta.effective_selection(kind);
+                let selected = items
+                    .iter()
+                    .position(|i| matches!(&i.action, Action::SelectTrack(_, id) if Some(id) == current.as_ref()))
+                    .unwrap_or(0);
+                self.stack.push(Frame::Tracks { kind, menu: Menu::new(items, selected) });
             }
             Action::SelectTrack(kind, id) => self.select_track(kind, id),
             Action::Browse => {
@@ -423,7 +428,9 @@ impl App {
                     _ => None,
                 };
                 let file = format!("{}/{}", self.config.media_path, child_path.join("/"));
-                self.player.play(&file, start, meta.aid.as_deref(), meta.sid.as_deref());
+                let aid = meta.effective_selection(TrackKind::Audio);
+                let sid = meta.effective_selection(TrackKind::Sub);
+                self.player.play(&file, start, aid.as_deref(), sid.as_deref());
                 self.stack.push(Frame::Video { name, menu });
                 self.mode = Mode::Paused;
             }
@@ -703,6 +710,16 @@ mod tests {
         assert_eq!(labels, ["Play", "Audio [en/2ch]", "Subtitles [none]"]);
     }
 
+    #[test]
+    fn video_items_show_default_tracks_before_any_pick() {
+        let mut node = video(Some(100.0), None);
+        node.meta.tracks.insert("track_audio_1".into(), "cs/2ch".into());
+        node.meta.tracks.insert("track_audio_2".into(), "eng/6ch".into());
+        node.meta.tracks.insert("track_sub_3".into(), "eng/SDH".into());
+        node.meta.tracks.insert("track_sub_4".into(), "eng".into());
+        let labels: Vec<String> = App::video_items(&node).iter().map(|i| i.label.clone()).collect();
+        assert_eq!(labels, ["Play", "Audio [eng/6ch]", "Subtitles [eng]"]);
+    }
     #[test]
     fn track_items_sub_has_none_entry_first() {
         let mut node = video(Some(100.0), None);

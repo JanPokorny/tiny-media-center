@@ -85,6 +85,33 @@ impl Meta {
         }
     }
 
+    // The user's pick, else the default: the best English track, else the
+    // first audio track / subtitles off. None until the probe has listed the
+    // tracks (mpv then picks). Passed to mpv explicitly, so the menu always
+    // shows what plays.
+    pub fn effective_selection(&self, kind: TrackKind) -> Option<String> {
+        if let Some(id) = self.selection(kind) {
+            return Some(id.to_string());
+        }
+        let tracks = self.track_list(kind);
+        // Dubtitles transcribe the English dub, so they only fit English audio.
+        let english_audio = kind == TrackKind::Sub
+            && self
+                .effective_selection(TrackKind::Audio)
+                .and_then(|id| self.track_label(TrackKind::Audio, &id).map(is_english))
+                .unwrap_or(false);
+        let english = tracks
+            .iter()
+            .filter(|(_, label)| is_english(label) && track_rank(label, english_audio).is_some())
+            .min_by_key(|(_, label)| track_rank(label, english_audio));
+        match (english, tracks.first()) {
+            (Some((id, _)), _) => Some(id.clone()),
+            (None, None) => None,
+            (None, Some((id, _))) if kind == TrackKind::Audio => Some(id.clone()),
+            (None, Some(_)) => Some(String::new()),
+        }
+    }
+
     pub fn track_label(&self, kind: TrackKind, id: &str) -> Option<&str> {
         self.tracks.get(&track_key(kind.as_str(), id)).map(String::as_str)
     }
@@ -117,6 +144,32 @@ impl Meta {
     }
 }
 
+// Labels start with the track's language code ("en", "eng", "en-US").
+fn is_english(label: &str) -> bool {
+    let lang = label.split('/').next().unwrap_or("").to_lowercase();
+    lang == "eng" || lang == "en" || lang.starts_with("en-")
+}
+
+// Lower is better: dubtitles (when the audio is the English dub they
+// transcribe), then plain, then SDH (or dubtitles under other audio), then
+// forced-only / signs & songs.
+// Commentary and audio description are never a default (None). Judged by
+// words in the label after the language.
+fn track_rank(label: &str, english_audio: bool) -> Option<u8> {
+    let rest = label.split_once('/').map_or("", |(_, rest)| rest).to_lowercase();
+    let has = |words: &[&str]| rest.split(|c: char| !c.is_alphanumeric()).any(|w| words.contains(&w));
+    if has(&["commentary", "description", "descriptive"]) {
+        None
+    } else if has(&["dubtitle", "dubtitles"]) {
+        Some(if english_audio { 0 } else { 2 })
+    } else if has(&["forced", "signs", "songs"]) {
+        Some(3)
+    } else if has(&["sdh", "cc", "hi"]) {
+        Some(2)
+    } else {
+        Some(1)
+    }
+}
 // A node is named by its key in the parent's children map; the path to it is
 // whatever segments the caller walked to reach it.
 #[derive(Default)]
@@ -338,6 +391,59 @@ mod tests {
         assert!(reparsed.probe_failed);
     }
 
+    #[test]
+    fn effective_selection_prefers_english_and_user_pick() {
+        let mut meta = Meta::default();
+        for (key, label) in [
+            ("track_audio_1", "jpn/2ch"),
+            ("track_audio_2", "eng/Commentary/2ch"),
+            ("track_audio_3", "eng/6ch"),
+            ("track_sub_1", "eng/Forced"),
+            ("track_sub_2", "eng/SDH"),
+            ("track_sub_3", "en"),
+            ("track_sub_4", "eng/Dubtitles"),
+            ("track_sub_5", "jpn"),
+        ] {
+            meta.tracks.insert(key.into(), label.into());
+        }
+        assert_eq!(meta.effective_selection(TrackKind::Audio).as_deref(), Some("3"));
+        assert_eq!(meta.effective_selection(TrackKind::Sub).as_deref(), Some("4"));
+        meta.tracks.remove("track_sub_4");
+        assert_eq!(meta.effective_selection(TrackKind::Sub).as_deref(), Some("3")); // plain over SDH/forced
+        meta.tracks.remove("track_sub_3");
+        assert_eq!(meta.effective_selection(TrackKind::Sub).as_deref(), Some("2")); // SDH over forced
+        meta.sid = Some("5".into());
+        assert_eq!(meta.effective_selection(TrackKind::Sub).as_deref(), Some("5")); // user pick wins
+
+        let mut foreign = Meta::default();
+        foreign.tracks.insert("track_audio_2".into(), "jpn".into());
+        foreign.tracks.insert("track_audio_1".into(), "fra".into());
+        foreign.tracks.insert("track_sub_1".into(), "jpn".into());
+        assert_eq!(foreign.effective_selection(TrackKind::Audio).as_deref(), Some("1")); // first track
+        assert_eq!(foreign.effective_selection(TrackKind::Sub).as_deref(), Some("")); // subs off
+        assert_eq!(Meta::default().effective_selection(TrackKind::Audio), None); // not probed yet
+
+        let mut anime = Meta::default();
+        for (key, label) in [
+            ("track_audio_1", "jpn/6ch"),
+            ("track_audio_2", "eng/Commentary/2ch"),
+            ("track_sub_1", "eng/Signs & Songs"),
+            ("track_sub_2", "eng/Dubtitle"),
+            ("track_sub_3", "eng/Full"),
+        ] {
+            anime.tracks.insert(key.into(), label.into());
+        }
+        // Commentary is never the default audio; with Japanese audio full
+        // subs beat the dubtitle, which beats signs & songs.
+        assert_eq!(anime.effective_selection(TrackKind::Audio).as_deref(), Some("1"));
+        assert_eq!(anime.effective_selection(TrackKind::Sub).as_deref(), Some("3"));
+        anime.tracks.remove("track_sub_3");
+        assert_eq!(anime.effective_selection(TrackKind::Sub).as_deref(), Some("2"));
+        anime.aid = Some("2".into());
+        anime.tracks.insert("track_audio_2".into(), "eng/2ch".into());
+        anime.tracks.insert("track_sub_3".into(), "eng/Full".into());
+        assert_eq!(anime.effective_selection(TrackKind::Sub).as_deref(), Some("2")); // English dub: dubtitle
+    }
     #[test]
     fn track_list_sorts_numerically() {
         let mut meta = Meta::default();

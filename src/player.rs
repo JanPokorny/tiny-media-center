@@ -195,6 +195,16 @@ pub fn probe(mpv: &mut Option<Mpv>, file: &str) -> Option<(f64, BTreeMap<String,
             if let Some(title) = str_of("title") {
                 label = format!("{label}/{title}");
             }
+            // Flags the default track choice ranks by, when the title
+            // doesn't already say so.
+            let flag = |key: &str| map.get(key).and_then(|n| n.bool()).unwrap_or(false);
+            let lower = label.to_lowercase();
+            if flag("forced") && !lower.contains("forced") {
+                label = format!("{label}/forced");
+            }
+            if flag("hearing-impaired") && !lower.contains("sdh") {
+                label = format!("{label}/SDH");
+            }
             if let Some(channels) = map.get("audio-channels").and_then(|n| n.i64()) {
                 label = format!("{label}/{channels}ch");
             }
