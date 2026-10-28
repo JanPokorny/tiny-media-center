@@ -25,6 +25,7 @@ BuildRequires:  pkgconfig(mpv)
 # Fedora packages SDL3, so link it dynamically instead of the vendored
 # static build used for the portable GitHub Releases binary.
 BuildRequires:  pkgconfig(sdl3)
+BuildRequires:  pkgconfig(x11)
 
 # libmpv.so.2 is picked up automatically; mpv-libs ships it since mpv 0.35.
 

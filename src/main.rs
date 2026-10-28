@@ -73,7 +73,26 @@ fn draw_progress<R: Renderer>(
     }
 }
 
+#[link(name = "X11")]
+extern "C" {
+    fn XSetIOErrorHandler(handler: extern "C" fn(*mut std::ffi::c_void) -> i32) -> *mut std::ffi::c_void;
+}
+
+extern "C" {
+    fn _exit(status: i32) -> !;
+}
+
+// Xlib's default handler calls exit() from whichever thread lost the X
+// connection. mpv's clipboard thread has its own connection, so two threads
+// race into exit() and deadlock (libGLX's destructor waits for a display
+// lock held by the other dying thread). _exit skips the destructors.
+extern "C" fn x_io_error(_display: *mut std::ffi::c_void) -> i32 {
+    eprintln!("X connection lost");
+    unsafe { _exit(1) }
+}
+
 fn main() {
+    unsafe { XSetIOErrorHandler(x_io_error) };
     let config = config::load();
     input::watch_controller_chord();
 
