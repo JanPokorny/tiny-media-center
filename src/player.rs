@@ -1,8 +1,5 @@
-// Embedded mpv. Replaces the Lua version's shell-outs:
-//  - playback: mpv renders into our GL framebuffer via the render API
-//    (was: spawn fullscreen mpv + runtime.lua printing position on stdout)
-//  - preflight: a reusable headless handle reads duration/track-list
-//    properties (was: spawn mpv + preflight.lua per file)
+// Embedded mpv: playback renders into our GL framebuffer via the render API;
+// a reusable headless handle reads duration/track-list for preflight.
 
 use libmpv2::events::Event;
 use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
@@ -44,11 +41,9 @@ impl Player {
             init.set_option("vo", "libmpv")?;
             init.set_option("config", "yes")?;
             init.set_option("config-dir", mpv_config_dir)?;
-            init.set_option("idle", "yes")?;
             // Pause on the last frame at EOF instead of unloading, so the
             // paused menu state can show it; the app watches eof-reached.
             init.set_option("keep-open", "yes")?;
-            init.set_option("input-default-bindings", "no")?;
             // Seeks draw their own overlay UI; mpv's OSD bar would double it.
             init.set_option("osd-on-seek", "no")?;
             init.set_option("sub-font-provider", "none")?;
@@ -145,16 +140,15 @@ impl Player {
     }
 }
 
-// Preflight probe (port of preflight.lua): load the file paused with no
+// Preflight probe: load the file paused with no
 // audio/video output, read duration and the track list, formatted exactly as
-// before: "lang[/title][/Nch][/codec]" keyed by track_<type>_<id>.
+// the old format: "lang[/title][/Nch][/codec]" keyed by track_<type>_<id>.
 pub fn probe(mpv: &mut Option<Mpv>, file: &str) -> Option<(f64, BTreeMap<String, String>)> {
     if mpv.is_none() {
         *mpv = Mpv::with_initializer(|init| {
             init.set_option("vo", "null")?;
             init.set_option("ao", "null")?;
             init.set_option("pause", "yes")?;
-            init.set_option("idle", "yes")?;
             Ok(())
         })
         .ok();

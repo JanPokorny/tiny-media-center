@@ -9,7 +9,7 @@ use crate::media::{self, Kind, Node, ScanMsg, TrackKind};
 use crate::menu::{Menu, MenuItem};
 use crate::player::Player;
 use crate::windows::{self, Win, Window};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -455,9 +455,8 @@ impl App {
     // Launch Dolphin / a shell script on a worker thread without waiting for
     // it (failures surface as a notice later), argv-style: no
     // shell parses the path, so file names can't be misread as syntax.
-    // Dolphin goes through the systemd user manager when available -- the
-    // Lua version needed that to avoid a GL-init segfault, and the detour is
-    // kept since the game also survives this app dying mid-session.
+    // Dolphin goes through the systemd user manager: avoids a GL-init
+    // segfault, and the game survives this app dying mid-session.
     fn run_external(&mut self, kind: Kind, path: &[String]) {
         let full = format!("{}/{}", self.config.media_path, path.join("/"));
         let name = path.last().cloned().unwrap_or_default();
@@ -465,19 +464,8 @@ impl App {
         let errors = self.launch_errors.0.clone();
         std::thread::spawn(move || {
             let status = if is_game {
-                let have_systemd = Command::new("systemd-run")
-                    .arg("--version")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .is_ok_and(|s| s.success());
-                let mut cmd = if have_systemd {
-                    let mut cmd = Command::new("systemd-run");
-                    cmd.args(["--user", "--wait", "--collect", "--same-dir", "dolphin-emu"]);
-                    cmd
-                } else {
-                    Command::new("dolphin-emu")
-                };
+                let mut cmd = Command::new("systemd-run");
+                cmd.args(["--user", "--wait", "--collect", "--same-dir", "dolphin-emu"]);
                 cmd.args(["--batch", "-C", "Dolphin.Display.Fullscreen=True"])
                     .args(["-C", "Dolphin.Interface.ConfirmStop=False"])
                     .arg(format!("--exec={full}"))

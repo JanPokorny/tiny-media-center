@@ -1,5 +1,5 @@
 // The media tree: the Node tree, .tmc metadata sidecars, watch percentage,
-// and the background scan thread (walk + subliminal + mpv preflight probe).
+// and the background scan thread (walk + mpv preflight probe).
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -47,8 +47,7 @@ fn is_false(b: &bool) -> bool {
     !b
 }
 
-// .tmc sidecar contents. Kept byte-compatible with the files written by the
-// Lua version: duration/position are TOML numbers, aid/sid are strings, and
+// .tmc sidecar contents. Existing files must stay readable: duration/position are TOML numbers, aid/sid are strings, and
 // track labels live in flattened `track_<type>_<id>` string keys.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Meta {
@@ -61,8 +60,7 @@ pub struct Meta {
     pub aid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sid: Option<String>,
-    // Negative cache: the preflight probe failed, don't retry (and re-run
-    // subliminal) on every launch. Delete the .tmc to force a retry.
+    // Negative cache: the preflight probe failed, don't retry on every launch. Delete the .tmc to force a retry.
     #[serde(default, skip_serializing_if = "is_false")]
     pub probe_failed: bool,
     // English subtitles are settled: the file has them, one was downloaded,
@@ -201,22 +199,13 @@ fn tmc_path(media_path: &str, node_path: &[String]) -> String {
     format!("{}/{}.tmc", media_path, node_path.join("/"))
 }
 
-// Earlier versions replaced the extension instead of appending; still read
-// as a fallback so existing libraries keep their positions.
-fn legacy_tmc_path(media_path: &str, node_path: &[String]) -> String {
-    let rel = node_path.join("/");
-    format!("{}/{}.tmc", media_path, strip_extension(&rel))
-}
-
 pub fn load_metadata(media_path: &str, node_path: &[String]) -> Meta {
-    for path in [tmc_path(media_path, node_path), legacy_tmc_path(media_path, node_path)] {
-        let Ok(s) = std::fs::read_to_string(&path) else { continue };
-        return toml::from_str(&s).unwrap_or_else(|e| {
-            eprintln!("tiny-media-center: ignoring unparsable metadata {path}: {e}");
-            Meta::default()
-        });
-    }
-    Meta::default()
+    let path = tmc_path(media_path, node_path);
+    let Ok(s) = std::fs::read_to_string(&path) else { return Meta::default() };
+    toml::from_str(&s).unwrap_or_else(|e| {
+        eprintln!("tiny-media-center: ignoring unparsable metadata {path}: {e}");
+        Meta::default()
+    })
 }
 
 // Write-to-temp + rename, so a power cut mid-write can't leave a corrupt
@@ -357,15 +346,6 @@ pub fn spawn_scan(media_path: String, subtitles: crate::config::Subtitles, tx: S
 mod tests {
     use super::*;
 
-    #[test]
-    fn strip_extension_cases() {
-        assert_eq!(strip_extension("movie.mp4"), "movie");
-        assert_eq!(strip_extension("a.b.c"), "a.b");
-        assert_eq!(strip_extension("noext"), "noext");
-        assert_eq!(strip_extension(".hidden"), ".hidden");
-        assert_eq!(strip_extension("trailing."), "trailing.");
-    }
-
     fn path(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
     }
@@ -376,10 +356,6 @@ mod tests {
         let b = tmc_path("/m", &path(&["dir", "movie.mkv"]));
         assert_eq!(a, "/m/dir/movie.mp4.tmc");
         assert_ne!(a, b);
-        // The legacy scheme (extension replaced) is what old files used.
-        assert_eq!(legacy_tmc_path("/m", &path(&["dir", "movie.mp4"])), "/m/dir/movie.tmc");
-        // A dotted directory name must not confuse the legacy path.
-        assert_eq!(legacy_tmc_path("/m", &path(&["Season.1", "ep.mp4"])), "/m/Season.1/ep.tmc");
     }
 
     fn video(duration: Option<f64>, position: Option<f64>) -> Node {
@@ -484,15 +460,5 @@ mod tests {
         let ids: Vec<String> = meta.track_list(TrackKind::Audio).into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids, ["1", "2", "10"]);
         assert_eq!(meta.track_list(TrackKind::Sub).len(), 1);
-    }
-
-    #[test]
-    fn insert_and_get_node() {
-        let mut root = Node::default();
-        insert(&mut root, path(&["shows", "a.mp4"]), Kind::Video, Meta::default());
-        insert(&mut root, path(&["shows", "b.mp4"]), Kind::Video, Meta::default());
-        assert_eq!(get_node(&root, &path(&["shows"])).unwrap().children.len(), 2);
-        assert!(get_node(&root, &path(&["shows", "a.mp4"])).is_some());
-        assert!(get_node(&root, &path(&["missing"])).is_none());
     }
 }

@@ -1,4 +1,4 @@
-// Port of components/background.lua: drifting starfield with additive
+// Drifting starfield with additive
 // proximity lines.
 
 use femtovg::{Canvas, Color, CompositeOperation, Paint, Path, Renderer};

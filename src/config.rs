@@ -1,4 +1,4 @@
-// Port of config.lua: reads $XDG_CONFIG_HOME/tiny-media-center/config.toml,
+// Reads $XDG_CONFIG_HOME/tiny-media-center/config.toml,
 // falling back to defaults for anything missing or unparsable.
 
 use serde::Deserialize;

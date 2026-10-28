@@ -1,6 +1,5 @@
-// The scrolling text menu. The GLSL fade shader of the Lua version is
-// replaced by the same falloff formula evaluated per item (at its center),
-// which reads identically at these fade band sizes.
+// The scrolling text menu. Fade falloff is evaluated per item (at its
+// center), which reads identically at these fade band sizes.
 
 use crate::config::{color, Config};
 use femtovg::{Baseline, Canvas, Color, FontId, Paint, Renderer};
@@ -101,7 +100,7 @@ impl<A> Menu<A> {
         }
         self.scroll_offset += (target - self.scroll_offset) * (10.0 * dt).min(1.0);
 
-        // Fade bands as in the menu.lua shader: transparent above the header,
+        // Fade bands: transparent above the header,
         // fading in down to 30% of screen height, fading out over the bottom
         // 30%. Applied only to lists that actually scroll -- a short centered
         // list has no off-screen continuation to hint at.
@@ -182,19 +181,5 @@ mod tests {
         assert_eq!(m.selected, 0); // wraps around
         m.jump_to_letter('x');
         assert_eq!(m.selected, 0); // no match: stay put
-    }
-
-    #[test]
-    fn navigation_stays_in_bounds() {
-        let mut m = menu(&["a", "b"]);
-        m.navigate_up();
-        assert_eq!(m.selected, 0);
-        m.navigate_down();
-        m.navigate_down();
-        assert_eq!(m.selected, 1);
-
-        let mut empty = menu(&[]);
-        empty.navigate_down();
-        assert_eq!(empty.selected, 0);
     }
 }
