@@ -370,7 +370,7 @@ impl App {
                     .root_selection
                     .as_ref()
                     .and_then(|n| Self::item_index(&items, n))
-                    .unwrap_or(0);
+                    .unwrap_or_else(|| items.iter().position(|i| !i.dim).unwrap_or(0));
                 self.stack.push(Frame::Dir { name: None, menu: Menu::new(items, selected) });
             }
             Action::Audio => self.stack.push(Frame::Audio { menu: Self::audio_menu() }),
@@ -415,8 +415,10 @@ impl App {
         let Some(child) = media::get_node(&self.tree, &child_path) else { return };
         match child.kind {
             Kind::Directory => {
-                let menu = Menu::new(Self::directory_items(child), 0);
-                self.stack.push(Frame::Dir { name: Some(name), menu });
+                // Start on the first item not yet watched (watched ones are dimmed).
+                let items = Self::directory_items(child);
+                let selected = items.iter().position(|i| !i.dim).unwrap_or(0);
+                self.stack.push(Frame::Dir { name: Some(name), menu: Menu::new(items, selected) });
             }
             Kind::Video => {
                 // Load right into the player, paused: the video menu is
