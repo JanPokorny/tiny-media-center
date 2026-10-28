@@ -2,22 +2,30 @@
 // single stack of frames (directory menus, the open video's menu, track
 // submenus), so there is no parallel path/menu bookkeeping to keep in sync.
 
+use crate::audio::{self, BtDevice, Discovery};
 use crate::config::Config;
 use crate::input::Input;
 use crate::media::{self, Kind, Node, ScanMsg, TrackKind};
 use crate::menu::{Menu, MenuItem};
 use crate::player::Player;
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Action {
     Open(String),
     Play,
     Tracks(TrackKind),
     SelectTrack(TrackKind, String),
     Browse,
+    Audio,
+    SetSink(String),
+    // The device, and whether it needs pairing first.
+    ConnectBt(BtDevice, bool),
+    PairNew,
+    // Raise another app's window by its X window id.
+    Activate(String),
     Shutdown,
 }
 
@@ -28,6 +36,9 @@ pub enum Frame {
     Dir { name: Option<String>, menu: Menu<Action> },
     Video { name: String, menu: Menu<Action> },
     Tracks { kind: TrackKind, menu: Menu<Action> },
+    Audio { menu: Menu<Action> },
+    // Bluetooth discovery runs while this is on the stack.
+    Pair { menu: Menu<Action>, scan: Discovery },
 }
 
 impl Frame {
@@ -36,7 +47,9 @@ impl Frame {
             Frame::Home { menu }
             | Frame::Dir { menu, .. }
             | Frame::Video { menu, .. }
-            | Frame::Tracks { menu, .. } => menu,
+            | Frame::Tracks { menu, .. }
+            | Frame::Audio { menu }
+            | Frame::Pair { menu, .. } => menu,
         }
     }
 }
@@ -46,8 +59,8 @@ pub enum Mode {
     // (probing continues in the background afterwards).
     Scanning,
     Browse,
-    // An external program (Wii game / shell script) is running; rx delivers
-    // an error message if it finished unsuccessfully.
+    // A slow task (Bluetooth connect) is running; rx delivers an error
+    // message if it finished unsuccessfully.
     External { text: String, rx: Receiver<Option<String>> },
     // A video is loaded (paused) and the playback menu is shown over its
     // still frame. Opening a video and pausing playback are the same state.
@@ -72,6 +85,8 @@ pub struct App {
     // File currently being probed by the background scan, for display.
     pub scan_status: String,
     scan_rx: Option<Receiver<ScanMsg>>,
+    // Failures of launched programs, which run without blocking the UI.
+    launch_errors: (Sender<String>, Receiver<String>),
     last_pos_save: Instant,
     // Selected item of the media root, kept across leaving it for Home.
     root_selection: Option<String>,
@@ -82,20 +97,13 @@ impl App {
         App {
             config,
             tree: Node::default(),
-            stack: vec![Frame::Home {
-                menu: Menu::new(
-                    vec![
-                        MenuItem::new("Open".into(), Action::Browse),
-                        MenuItem::new("Shut down".into(), Action::Shutdown),
-                    ],
-                    0,
-                ),
-            }],
+            stack: vec![Frame::Home { menu: Menu::new(Self::home_items(), 0) }],
             mode: Mode::Scanning,
             player,
             notice: None,
             scan_status: String::new(),
             scan_rx: Some(scan_rx),
+            launch_errors: channel(),
             last_pos_save: Instant::now(),
             root_selection: None,
         }
@@ -112,7 +120,9 @@ impl App {
             .filter_map(|frame| match frame {
                 Frame::Dir { name, .. } => name.clone(),
                 Frame::Video { name, .. } => Some(name.clone()),
-                Frame::Home { .. } | Frame::Tracks { .. } => None,
+                Frame::Home { .. } | Frame::Tracks { .. } | Frame::Audio { .. } | Frame::Pair { .. } => {
+                    None
+                }
             })
             .collect()
     }
@@ -150,6 +160,8 @@ impl App {
             Frame::Dir { name: Some(name), .. } => name,
             Frame::Video { name, .. } => media::strip_extension(name),
             Frame::Tracks { kind, .. } => kind.as_str(),
+            Frame::Audio { .. } => "Audio",
+            Frame::Pair { .. } => "Pair new (searching...)",
         }
     }
 
@@ -158,6 +170,78 @@ impl App {
         items.iter().position(|i| matches!(&i.action, Action::Open(m) if m == name))
     }
 
+    // Open / Back to <window> per other app window / Audio [current output]
+    // / Shut down.
+    fn home_items() -> Vec<MenuItem<Action>> {
+        let default = audio::default_sink();
+        let audio = match audio::sinks().into_iter().find(|s| s.name == default) {
+            Some(sink) => format!("Audio [{}]", sink.description),
+            None => "Audio".into(),
+        };
+        let mut items = vec![MenuItem::new("Open".into(), Action::Browse)];
+        items.extend(
+            Self::other_windows()
+                .into_iter()
+                .map(|(id, title)| MenuItem::new(format!("Back to {title}"), Action::Activate(id))),
+        );
+        items.push(MenuItem::new(audio, Action::Audio));
+        items.push(MenuItem::new("Shut down".into(), Action::Shutdown));
+        items
+    }
+
+    // (window id, title) of every window the WM manages except our own.
+    fn other_windows() -> Vec<(String, String)> {
+        let Ok(out) = Command::new("wmctrl").arg("-lx").stderr(Stdio::null()).output() else {
+            return vec![];
+        };
+        String::from_utf8_lossy(&out.stdout).lines().filter_map(Self::parse_wmctrl_line).collect()
+    }
+
+    // `wmctrl -lx` line: id, desktop, WM_CLASS, host, then the title, with
+    // the first four columns space-padded.
+    fn parse_wmctrl_line(line: &str) -> Option<(String, String)> {
+        let mut rest = line;
+        let mut cols = [""; 4];
+        for col in &mut cols {
+            rest = rest.trim_start();
+            (*col, rest) = rest.split_at(rest.find(char::is_whitespace)?);
+        }
+        let [id, _, class, _] = cols;
+        (class != "tiny-media-center.tiny-media-center").then(|| (id.into(), rest.trim().into()))
+    }
+
+    // Current outputs (the default selected), then paired but disconnected
+    // Bluetooth audio devices (dimmed), then Pair new.
+    fn audio_menu() -> Menu<Action> {
+        let default = audio::default_sink();
+        let sinks = audio::sinks();
+        let selected = sinks.iter().position(|s| s.name == default).unwrap_or(0);
+        let mut items: Vec<_> =
+            sinks.into_iter().map(|s| MenuItem::new(s.description, Action::SetSink(s.name))).collect();
+        for device in audio::bt_audio_devices(true).into_iter().filter(|d| !d.connected) {
+            let mut item = MenuItem::new(device.name.clone(), Action::ConnectBt(device, false));
+            item.dim = true;
+            items.push(item);
+        }
+        items.push(MenuItem::new("Pair new".into(), Action::PairNew));
+        Menu::new(items, selected)
+    }
+
+    pub fn refresh_home(&mut self) {
+        // Keep the selection by action: the window items come and go, and an
+        // index could slide onto Shut down.
+        if let [Frame::Home { menu }] = self.stack.as_mut_slice() {
+            let items = Self::home_items();
+            let action = menu.items.get(menu.selected).map(|i| &i.action);
+            let selected = items.iter().position(|i| Some(&i.action) == action).unwrap_or(0);
+            menu.update_items(items, selected);
+        }
+    }
+
+    fn show_notice(&mut self, message: String) {
+        eprintln!("tiny-media-center: {message}");
+        self.notice = Some((message, Instant::now()));
+    }
     // File name of the selected directory item.
     fn selected_name(menu: &Menu<Action>) -> Option<String> {
         match &menu.items.get(menu.selected)?.action {
@@ -284,6 +368,30 @@ impl App {
                     .unwrap_or(0);
                 self.stack.push(Frame::Dir { name: None, menu: Menu::new(items, selected) });
             }
+            Action::Audio => self.stack.push(Frame::Audio { menu: Self::audio_menu() }),
+            Action::SetSink(name) => {
+                if let Some(error) = audio::set_default_sink(&name) {
+                    self.show_notice(error);
+                }
+                self.stack.truncate(1);
+                self.refresh_home();
+            }
+            Action::ConnectBt(device, pair) => {
+                self.stack.truncate(1);
+                let text = format!("Connecting to {}...", device.name);
+                self.run_task(text, move || audio::connect(&device, pair));
+            }
+            Action::Activate(id) => {
+                if let Err(e) = Command::new("wmctrl").args(["-i", "-a", &id]).status() {
+                    self.show_notice(format!("wmctrl: {e}"));
+                }
+            }
+            Action::PairNew => {
+                match audio::discover() {
+                    Ok(scan) => self.stack.push(Frame::Pair { menu: Menu::new(vec![], 0), scan }),
+                    Err(e) => self.show_notice(format!("bluetoothctl: {e}")),
+                }
+            }
             // systemctl only queues the poweroff job, so this doesn't block.
             Action::Shutdown => {
                 let message = match Command::new("systemctl").arg("poweroff").output() {
@@ -291,8 +399,7 @@ impl App {
                     Ok(out) => format!("shut down: {}", String::from_utf8_lossy(&out.stderr).trim()),
                     Err(e) => format!("shut down: {e}"),
                 };
-                eprintln!("tiny-media-center: {message}");
-                self.notice = Some((message, Instant::now()));
+                self.show_notice(message);
             }
         }
     }
@@ -324,7 +431,8 @@ impl App {
         }
     }
 
-    // Launch Dolphin / a shell script on a worker thread, argv-style: no
+    // Launch Dolphin / a shell script on a worker thread without waiting for
+    // it (failures surface as a notice later), argv-style: no
     // shell parses the path, so file names can't be misread as syntax.
     // Dolphin goes through the systemd user manager when available -- the
     // Lua version needed that to avoid a GL-init segfault, and the detour is
@@ -333,7 +441,7 @@ impl App {
         let full = format!("{}/{}", self.config.media_path, path.join("/"));
         let name = path.last().cloned().unwrap_or_default();
         let is_game = kind == Kind::WiiGame;
-        let (tx, rx) = channel();
+        let errors = self.launch_errors.0.clone();
         std::thread::spawn(move || {
             let status = if is_game {
                 let have_systemd = Command::new("systemd-run")
@@ -357,16 +465,22 @@ impl App {
                 Command::new("bash").arg(&full).status()
             };
             let error = match status {
-                Ok(status) if status.success() => None,
-                Ok(status) => Some(format!("{name}: {status}")),
-                Err(e) => Some(format!("{name}: {e}")),
+                Ok(status) if status.success() => return,
+                Ok(status) => format!("{name}: {status}"),
+                Err(e) => format!("{name}: {e}"),
             };
-            let _ = tx.send(error);
+            let _ = errors.send(error);
         });
-        self.mode = Mode::External {
-            text: if is_game { "Playing..." } else { "Running..." }.into(),
-            rx,
-        };
+    }
+
+    // Run task on a worker thread behind a loading screen showing text; it
+    // returns an error message on failure.
+    fn run_task(&mut self, text: String, task: impl FnOnce() -> Option<String> + Send + 'static) {
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(task());
+        });
+        self.mode = Mode::External { text, rx };
     }
 
     fn select_track(&mut self, kind: TrackKind, id: String) {
@@ -391,6 +505,7 @@ impl App {
                     self.root_selection = Self::selected_name(&menu);
                 }
                 self.menu().reset_scroll();
+                self.refresh_home();
             }
             _ => {}
         }
@@ -499,6 +614,9 @@ impl App {
 
     // Check on a running external command; surface its failure if any.
     pub fn pump_external(&mut self) {
+        while let Ok(message) = self.launch_errors.1.try_recv() {
+            self.show_notice(message);
+        }
         let Mode::External { rx, .. } = &self.mode else { return };
         let error = match rx.try_recv() {
             Ok(error) => error,
@@ -506,10 +624,29 @@ impl App {
             Err(TryRecvError::Disconnected) => Some("external command thread died".into()),
         };
         if let Some(message) = error {
-            eprintln!("tiny-media-center: {message}");
-            self.notice = Some((message, Instant::now()));
+            self.show_notice(message);
         }
         self.mode = Mode::Browse;
+        self.refresh_home();
+    }
+
+    // Show the latest Bluetooth discovery results, keeping the selection;
+    // leave if the scan died.
+    pub fn pump_pair(&mut self) {
+        let Some(Frame::Pair { menu, scan }) = self.stack.last_mut() else { return };
+        if scan.stopped() {
+            self.stack.pop();
+            self.show_notice("Bluetooth scan stopped (is Bluetooth on?)".into());
+            return;
+        }
+        let Some(found) = scan.rx.try_iter().last() else { return };
+        let selected_mac = match &menu.items.get(menu.selected).map(|i| &i.action) {
+            Some(Action::ConnectBt(device, _)) => Some(device.mac.clone()),
+            _ => None,
+        };
+        let selected = found.iter().position(|d| Some(&d.mac) == selected_mac.as_ref()).unwrap_or(0);
+        let items = found.into_iter().map(|d| MenuItem::new(d.name.clone(), Action::ConnectBt(d, true))).collect();
+        menu.update_items(items, selected);
     }
 }
 
@@ -548,6 +685,14 @@ mod tests {
         assert_eq!(items[2].jump, "delta");
     }
 
+    #[test]
+    fn parse_wmctrl_lines() {
+        let line = "0x02200003  0 steam.Steam           tv Steam  Big  Picture";
+        assert_eq!(App::parse_wmctrl_line(line), Some(("0x02200003".into(), "Steam  Big  Picture".into())));
+        let own = "0x00800034  0 tiny-media-center.tiny-media-center  tv tiny media center";
+        assert_eq!(App::parse_wmctrl_line(own), None);
+        assert_eq!(App::parse_wmctrl_line("0x1 0 tv.tv tv"), None); // no title
+    }
     #[test]
     fn video_items_show_current_tracks() {
         let mut node = video(Some(100.0), None);

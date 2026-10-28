@@ -2,6 +2,7 @@
 // overlay, watch progress). Navigation and playback state live in app.rs.
 
 mod app;
+mod audio;
 mod background;
 mod config;
 mod input;
@@ -15,7 +16,7 @@ use config::color;
 use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, Paint, Path, Renderer};
 use menu::text_width;
 use player::Player;
-use sdl3::event::Event;
+use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::{Keycode, Mod};
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
@@ -142,9 +143,14 @@ fn main() {
                     // Restart in place (re-exec the current binary).
                     use std::os::unix::process::CommandExt;
                     let exe = std::env::current_exe().expect("current_exe");
+                    // exec skips destructors; drop explicitly so child
+                    // processes (Bluetooth scan) are stopped.
+                    drop(app);
                     let err = std::process::Command::new(exe).exec();
                     panic!("restart failed: {err}");
                 }
+                // Coming back from another app: its window list may have changed.
+                Event::Window { win_event: WindowEvent::FocusGained, .. } => app.refresh_home(),
                 _ if busy => {}
                 Event::MouseWheel { y, .. } if !playing => {
                     // One wheel notch (y = ±1) per menu step; the buffer
@@ -172,6 +178,7 @@ fn main() {
 
         app.pump_scan();
         app.pump_external();
+        app.pump_pair();
         if app.notice.as_ref().is_some_and(|(_, since)| since.elapsed() > Duration::from_secs(5)) {
             app.notice = None;
         }
