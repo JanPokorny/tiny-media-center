@@ -160,15 +160,19 @@ impl App {
         media::get_node(&self.tree, &self.video_path()?)
     }
 
-    // The open file's display name when it's an audio file: audio has no
+    // (album, track) of the open file when it's an audio file: audio has no
     // video frames to render, so playback shows a now-playing screen instead.
-    pub fn audio_name(&self) -> Option<&str> {
-        self.stack.iter().find_map(|frame| match frame {
-            Frame::Video { name, .. } if media::is_audio(name) => {
-                Some(media::strip_extension(name))
-            }
+    // The album is the parent folder's name, empty at the library root.
+    pub fn now_playing(&self) -> Option<(&str, &str)> {
+        let track = self.stack.iter().find_map(|frame| match frame {
+            Frame::Video { name, .. } if media::is_audio(name) => Some(media::strip_extension(name)),
             _ => None,
-        })
+        })?;
+        let album = self.stack.iter().rev().find_map(|frame| match frame {
+            Frame::Dir { name, .. } => Some(name.as_deref().unwrap_or("")),
+            _ => None,
+        });
+        Some((album.unwrap_or(""), track))
     }
 
     pub fn title(&self) -> &str {
@@ -263,8 +267,8 @@ impl App {
                     media::strip_extension(name).to_string()
                 };
                 // watch_pct is 0 for anything that isn't a video, so pct > 0
-                // alone identifies (partially) watched videos.
-                let pct = media::watch_pct(child);
+                // alone identifies (partially) watched videos. Music isn't tracked.
+                let pct = if media::is_audio(name) { 0 } else { media::watch_pct(child) };
                 let in_progress = pct > 0 && pct < 100;
                 let jump = display.to_lowercase();
                 let label = if in_progress { format!("* {display}") } else { display };
@@ -438,7 +442,11 @@ impl App {
             Kind::Video => {
                 // Load right into the player, paused: the video menu is
                 // drawn over the still frame from here on.
-                let menu = Menu::new(Self::video_items(child), 0);
+                let mut items = Self::video_items(child);
+                if media::is_audio(&name) {
+                    items.truncate(1); // Play only
+                }
+                let menu = Menu::new(items, 0);
                 let meta = &child.meta;
                 let start = match (meta.position, meta.duration) {
                     (Some(pos), Some(dur)) if pos < dur - 3.0 => Some(pos),
@@ -789,6 +797,14 @@ mod tests {
         // Jump keys ignore the "* " prefix and case.
         assert_eq!(items[0].jump, "beta");
         assert_eq!(items[2].jump, "delta");
+
+        // Music is never starred, dimmed or moved up, however far in.
+        let mut dir = Node::default();
+        dir.children.insert("b.flac".into(), video(Some(100.0), Some(50.0)));
+        dir.children.insert("a.flac".into(), video(Some(100.0), Some(100.0)));
+        let items = App::directory_items(&dir);
+        assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        assert!(items.iter().all(|i| !i.dim));
     }
 
     #[test]

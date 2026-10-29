@@ -225,22 +225,24 @@ fn main() {
                 app.player.render(w as i32, h as i32);
                 canvas.set_size(w, h, 1.0);
                 // Audio files render no video: gray "now playing" in the
-                // corner, the file name centered in white.
-                if let Some(name) = app.audio_name() {
+                // corner, the album above the file name centered in white.
+                let audio = app.now_playing();
+                if let Some((album, track)) = audio {
                     canvas.clear_rect(0, 0, w, h, color(BACKGROUND_COLOR, 1.0));
                     let paint = Paint::color(color(DIM_COLOR, 1.0))
                         .with_font(&[font])
                         .with_font_size(FONT_SIZE)
                         .with_text_baseline(Baseline::Top);
                     let _ = canvas.fill_text(0.0, 0.0, "now playing", &paint);
+                    draw_centered(&mut canvas, album, (hf - FONT_SIZE) / 2.0 - FONT_SIZE * 1.2, wf, &paint);
                     let paint = paint.with_color(color(TEXT_COLOR, 1.0));
-                    draw_centered(&mut canvas, name, (hf - FONT_SIZE) / 2.0, wf, &paint);
+                    draw_centered(&mut canvas, track, (hf - FONT_SIZE) / 2.0, wf, &paint);
                 }
                 // Seek overlay: progress bar + current time, fading out over
-                // the last moments before osd_until.
+                // the last moments before osd_until (always up for audio).
                 let osd = osd_until.saturating_duration_since(Instant::now()).as_secs_f32();
-                if osd > 0.0 {
-                    let alpha = (osd / 0.3).min(1.0);
+                if osd > 0.0 || audio.is_some() {
+                    let alpha = if audio.is_some() { 1.0 } else { (osd / 0.3).min(1.0) };
                     let duration = app.player.duration();
                     let frac = if duration > 0.0 {
                         (app.player.time_pos / duration).clamp(0.0, 1.0) as f32
