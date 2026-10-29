@@ -211,7 +211,7 @@ impl App {
     }
 
     fn window_items(windows: &[Win]) -> Vec<MenuItem<Action>> {
-        windows.iter().map(|w| MenuItem::new(format!("* {}", w.title), Action::Window(w.id))).collect()
+        windows.iter().map(|w| MenuItem::new(format!("+ {}", w.title), Action::Window(w.id))).collect()
     }
 
     // The latest in-progress videos, newest first (sidecars without a
@@ -238,8 +238,8 @@ impl App {
                 let stem = media::strip_extension(path.last().unwrap());
                 // Episodes sit in a show folder below the category (Shows/<show>/...).
                 let label = match path.len() {
-                    3.. => format!("+ {} {stem}", path[path.len() - 2]),
-                    _ => format!("+ {stem}"),
+                    3.. => format!("* {} {stem}", path[path.len() - 2]),
+                    _ => format!("* {stem}"),
                 };
                 MenuItem::new(label, Action::Resume(path))
             })
@@ -379,7 +379,7 @@ impl App {
                 Input::Right(_) => self.seek_player(5.0),
                 Input::Up(_) => self.player.add_sub_delay(-0.5),
                 Input::Down(_) => self.player.add_sub_delay(0.5),
-                Input::Letter(_) => {}
+                Input::Letter(_) | Input::Tab => {}
             }
         } else if matches!(self.mode, Mode::Browse | Mode::Paused) {
             match input {
@@ -387,7 +387,10 @@ impl App {
                 Input::Down(repeat) => self.menu().navigate_down(!repeat),
                 Input::Confirm => self.navigate_in(),
                 Input::Back => self.navigate_out(),
-                Input::Home => self.go_home(),
+                // The Esc, Tab chord: the Esc that just paused playback (which
+                // saved, resetting last_pos_save) must not be followed by Home.
+                Input::Tab if self.last_pos_save.elapsed() < Duration::from_millis(500) => {}
+                Input::Home | Input::Tab => self.go_home(),
                 Input::Letter(c) => self.menu().jump_to_letter(c),
                 Input::Left(repeat) => self.menu().jump_group(false, !repeat),
                 Input::Right(repeat) => self.menu().jump_group(true, !repeat),
@@ -395,10 +398,13 @@ impl App {
         }
     }
 
-    // Pop everything but Home, closing the open video (position saved) first.
+    // Pop everything but Home, closing the open video first. Pausing saved
+    // the position already; only playback has unsaved progress.
     fn go_home(&mut self) {
         if self.video_path().is_some() {
-            self.save_position();
+            if matches!(self.mode, Mode::Playing { .. }) {
+                self.save_position();
+            }
             self.close_player();
         }
         self.stack.truncate(1);
@@ -720,7 +726,8 @@ impl App {
         if let Some(windows) = list {
             self.update_windows(windows);
         }
-        if home {
+        // Like other input, not while busy.
+        if home && !matches!(self.mode, Mode::Scanning | Mode::External { .. }) {
             self.handle_input(Input::Home);
         }
         // Not over a video, whose menu and stack stay as they are.
@@ -899,9 +906,9 @@ mod tests {
         let items = App::continue_items(&tree);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         // Newest first, capped at 5; the timestamp-less ones and music miss out.
-        assert_eq!(labels, ["+ Show S01E02", "+ Show S01E04", "+ Show S01E00", "+ Show S01E05", "+ Show S01E03"]);
+        assert_eq!(labels, ["* Show S01E02", "* Show S01E04", "* Show S01E00", "* Show S01E05", "* Show S01E03"]);
         tree.children.remove("Shows");
-        assert_eq!(App::continue_items(&tree)[0].label, "+ Film");
+        assert_eq!(App::continue_items(&tree)[0].label, "* Film");
         assert!(matches!(&App::continue_items(&tree)[0].action, Action::Resume(p) if p == &["Movies", "Film.mkv"]));
     }
 
