@@ -17,6 +17,7 @@ ureq = { version = "3", features = ["json"] }
 x11rb = "0.14.0"
 zbus = "6.1.0"
 zruntime = "0.2"
+notify = "8.2.1"
 
 [features]
 # System SDL3 by default; the portable release binary links it statically.

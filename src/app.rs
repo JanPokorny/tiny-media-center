@@ -85,6 +85,8 @@ const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(10);
 
 pub struct App {
     tree: Node,
+    // The tree being streamed in by a walk, swapped in when it finishes.
+    walking: Node,
     pub stack: Vec<Frame>,
     pub mode: Mode,
     pub player: Player,
@@ -110,6 +112,7 @@ impl App {
     pub fn new(player: Player, scan_rx: Receiver<ScanMsg>, windows_rx: Receiver<Vec<Win>>) -> App {
         App {
             tree: Node::default(),
+            walking: Node::default(),
             stack: vec![Frame::Home { menu: Menu::new(Self::home_items(&[]), 0) }],
             mode: Mode::Scanning,
             player,
@@ -563,21 +566,15 @@ impl App {
         while matches!(self.stack.last(), Some(Frame::Tracks { .. })) {
             self.stack.pop();
         }
-        let name = match self.stack.pop_if(|f| matches!(f, Frame::Video { .. })) {
-            Some(Frame::Video { name, .. }) => Some(name),
-            _ => None,
-        };
-        let path = self.fs_path();
-        if let Some(dir) = media::get_node(&self.tree, &path) {
-            let items = Self::directory_items(dir);
-            let selected = name.and_then(|n| Self::item_index(&items, &n)).unwrap_or(0);
-            self.menu().set_items(items, selected);
-        }
+        self.stack.pop_if(|f| matches!(f, Frame::Video { .. }));
         self.mode = Mode::Browse;
+        self.refresh_dirs();
+        self.menu().reset_scroll();
     }
 
-    // Drain the scan channel: entries stream in during the walk, probe
-    // results after. Browsing starts as soon as the walk is done.
+    // Drain the scan channel: entries stream in during a walk, probe
+    // results after. Browsing starts as soon as the first walk is done;
+    // later walks (the library changed) swap the tree in silently.
     pub fn pump_scan(&mut self) {
         let Some(rx) = self.scan_rx.take() else { return };
         let mut refresh = false;
@@ -585,9 +582,23 @@ impl App {
             match rx.try_recv() {
                 Ok(ScanMsg::Status(status)) => self.scan_status = status,
                 Ok(ScanMsg::Entry { parts, kind, meta }) => {
-                    media::insert(&mut self.tree, parts, kind, meta);
+                    media::insert(&mut self.walking, parts, kind, meta);
                 }
-                Ok(ScanMsg::WalkDone) => self.mode = Mode::Browse,
+                Ok(ScanMsg::WalkDone) => {
+                    let mut tree = std::mem::take(&mut self.walking);
+                    // The open video's in-memory metadata can be newer than what
+                    // the walk read from its sidecar (track pick, probe result).
+                    if let Some(path) = self.video_path() {
+                        if let (Some(old), Some(new)) = (media::get_node(&self.tree, &path), media::get_node_mut(&mut tree, &path)) {
+                            new.meta = old.meta.clone();
+                        }
+                    }
+                    self.tree = tree;
+                    if matches!(self.mode, Mode::Scanning) {
+                        self.mode = Mode::Browse;
+                    }
+                    refresh = true;
+                }
                 Ok(ScanMsg::Probed { parts, result, subs_done }) => {
                     // Mirror what the scan saved, so later saves from here
                     // (position, track picks) don't write stale values back.
@@ -597,7 +608,8 @@ impl App {
                     }
                     refresh = true;
                 }
-                Ok(ScanMsg::Done) | Err(TryRecvError::Disconnected) => {
+                Ok(ScanMsg::Done) => self.scan_status.clear(),
+                Err(TryRecvError::Disconnected) => {
                     self.scan_status.clear();
                     break;
                 }
@@ -608,24 +620,19 @@ impl App {
             }
         }
         if refresh {
-            self.refresh_dir_menu();
+            self.refresh_dirs();
         }
     }
 
-    // Rebuild the visible directory menu after background metadata updates,
-    // keeping the selection (by name) and the scroll position.
-    fn refresh_dir_menu(&mut self) {
-        if !matches!(self.mode, Mode::Browse) || !matches!(self.stack.last(), Some(Frame::Dir { .. })) {
-            return;
+    // Bring the directory frames up to date after the tree changed. Playback
+    // is left alone (mpv has the file open); a paused video that vanished is
+    // closed.
+    fn refresh_dirs(&mut self) {
+        match self.mode {
+            Mode::Paused if self.video_node().is_none() => self.close_player(),
+            Mode::Browse | Mode::Paused => sync_dirs(&mut self.stack, &self.tree),
+            _ => {}
         }
-        let path = self.fs_path();
-        let Some(node) = media::get_node(&self.tree, &path) else { return };
-        let items = Self::directory_items(node);
-        let menu = self.menu();
-        let selected = Self::selected_name(menu)
-            .and_then(|n| Self::item_index(&items, &n))
-            .unwrap_or_else(|| menu.selected.min(items.len().saturating_sub(1)));
-        menu.update_items(items, selected);
     }
 
     // Take the latest window list from the window manager; leave window frames
@@ -710,6 +717,31 @@ impl App {
     }
 }
 
+// Rebuild every directory frame from the tree, keeping each selection by
+// name (else by index), and pop back to the deepest directory that still
+// exists. Other frames are untouched.
+fn sync_dirs(stack: &mut Vec<Frame>, tree: &Node) {
+    let mut path = vec![];
+    let mut keep = stack.len();
+    for (i, frame) in stack.iter_mut().enumerate() {
+        let Frame::Dir { name, menu } = frame else { continue };
+        path.extend(name.clone());
+        let Some(dir) = media::get_node(tree, &path).filter(|n| n.kind == Kind::Directory) else {
+            keep = i;
+            break;
+        };
+        let items = App::directory_items(dir);
+        let selected = App::selected_name(menu)
+            .and_then(|n| App::item_index(&items, &n))
+            .unwrap_or_else(|| menu.selected.min(items.len().saturating_sub(1)));
+        menu.update_items(items, selected);
+    }
+    if keep < stack.len() {
+        stack.truncate(keep);
+        stack.last_mut().unwrap().menu_mut().reset_scroll();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,6 +775,57 @@ mod tests {
         // Jump keys ignore the "* " prefix and case.
         assert_eq!(items[0].jump, "beta");
         assert_eq!(items[2].jump, "delta");
+    }
+
+    #[test]
+    fn sync_dirs_keeps_selection_and_pops_to_deepest_existing() {
+        let file = |_: &str| video(None, None);
+        let mut tree = Node::default();
+        let mut show = Node::default();
+        for f in ["a.mkv", "b.mkv", "c.mkv"] {
+            show.children.insert(f.into(), file(f));
+        }
+        tree.children.insert("show".into(), show);
+        tree.children.insert("z.mkv".into(), file("z.mkv"));
+        let dir = |name: Option<&str>, node: &Node, selected: &str| {
+            let items = App::directory_items(node);
+            let sel = App::item_index(&items, selected).unwrap();
+            Frame::Dir { name: name.map(Into::into), menu: Menu::new(items, sel) }
+        };
+        let mut stack = vec![
+            Frame::Home { menu: Menu::new(vec![], 0) },
+            dir(None, &tree, "show"),
+            dir(Some("show"), &tree.children["show"], "b.mkv"),
+        ];
+        let selected = |stack: &[Frame], i: usize| match &stack[i] {
+            Frame::Dir { menu, .. } => App::selected_name(menu),
+            _ => None,
+        };
+
+        // A file before the selection vanishes: selection follows the name.
+        tree.children.get_mut("show").unwrap().children.remove("a.mkv");
+        sync_dirs(&mut stack, &tree);
+        assert_eq!(selected(&stack, 2).as_deref(), Some("b.mkv"));
+        assert_eq!(stack[2].menu_mut().selected, 0);
+        // The selected file vanishes: same index, clamped.
+        tree.children.get_mut("show").unwrap().children.remove("b.mkv");
+        sync_dirs(&mut stack, &tree);
+        assert_eq!(selected(&stack, 2).as_deref(), Some("c.mkv"));
+        // New files appear in the root, the selection stays on "show".
+        tree.children.insert("a.mkv".into(), file("a.mkv"));
+        sync_dirs(&mut stack, &tree);
+        assert_eq!(selected(&stack, 1).as_deref(), Some("show"));
+        // The directory we're in disappears: back to the root, Home untouched.
+        tree.children.remove("show");
+        sync_dirs(&mut stack, &tree);
+        assert_eq!(stack.len(), 2);
+        assert!(matches!(stack[0], Frame::Home { .. }));
+        assert_eq!(selected(&stack, 1).as_deref(), Some("z.mkv")); // "show" gone: same index
+        // The root emptied out entirely.
+        tree.children.clear();
+        sync_dirs(&mut stack, &tree);
+        assert_eq!(stack.len(), 2);
+        assert!(stack[1].menu_mut().items.is_empty());
     }
 
     #[test]

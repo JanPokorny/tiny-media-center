@@ -3,7 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::mpsc::Sender;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Kind {
@@ -192,7 +194,7 @@ const AUDIO_EXTS: &[&str] =
     &["mp3", "flac", "ogg", "oga", "opus", "m4a", "aac", "wav", "wma", "aiff", "ape", "mka"];
 
 fn has_ext(name: &str, exts: &[&str]) -> bool {
-    let ext = std::path::Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("");
     exts.iter().any(|e| e.eq_ignore_ascii_case(ext))
 }
 
@@ -276,84 +278,170 @@ pub fn insert(root: &mut Node, parts: Vec<String>, kind: Kind, meta: Meta) {
     cur.children.insert(parts.last().unwrap().clone(), leaf);
 }
 
-// The background scan. Pass 1 walks the media dir and streams entries with
-// whatever metadata the sidecars already hold -- the UI becomes browsable as
-// soon as that finishes. Pass 2 then handles videos never probed, or without
-// settled English subtitles: the mpv preflight probe lists the tracks, and
-// if there's no English subtitle among them one is downloaded and the file
-// re-probed so the new track shows up.
+// Quiet time after the last relevant filesystem event before rescanning, and
+// the age a file must reach before it is probed: a copy still in progress
+// would otherwise be probed half-written and written off for good.
+const DEBOUNCE: Duration = Duration::from_secs(5);
+const SETTLE: Duration = Duration::from_secs(10);
+
+fn listed_kind(name: &str) -> Option<Kind> {
+    match Path::new(name).extension().and_then(|e| e.to_str()) {
+        Some("rvz" | "wbfs") => Some(Kind::WiiGame),
+        Some("sh") => Some(Kind::Script),
+        _ if is_audio(name) || has_ext(name, VIDEO_EXTS) => Some(Kind::Video),
+        _ => None,
+    }
+}
+
+// Whether a filesystem event can change the listing: a listed file created,
+// removed or modified (a copy in progress), a directory created or removed,
+// or anything renamed (a directory's type is unknown once it's gone).
+// tmc's own sidecar and subtitle writes (.tmc, .tmp, .srt) never count, and
+// neither does anything hidden, which the scan skips.
+fn affects_listing(root: &Path, event: &notify::Event) -> bool {
+    use notify::event::{AccessKind, AccessMode, CreateKind, ModifyKind, RemoveKind};
+    use notify::EventKind::*;
+    let mut paths = event.paths.iter().filter(|p| {
+        p.strip_prefix(root).is_ok_and(|rel| !rel.components().any(|c| c.as_os_str().as_encoded_bytes().starts_with(b".")))
+    });
+    let listed = |p: &PathBuf| p.file_name().is_some_and(|n| listed_kind(&n.to_string_lossy()).is_some());
+    match event.kind {
+        Create(CreateKind::Folder) | Remove(RemoveKind::Folder) => paths.next().is_some(),
+        Modify(ModifyKind::Name(_)) => paths.any(|p| !has_ext(&p.to_string_lossy(), &["tmc", "tmp", "srt"])),
+        Create(_) | Remove(_) | Modify(_) | Access(AccessKind::Close(AccessMode::Write)) => paths.any(listed),
+        _ => false,
+    }
+}
+
+// Pass 1: walk the media dir, streaming entries with whatever metadata the
+// sidecars already hold. Returns the videos to probe, and how long until the
+// youngest too-fresh file (skipped for now) is old enough. Subtitle fetches
+// that failed transiently are only retried at startup, not on every rescan.
+fn walk(media_path: &str, startup: bool, tx: &Sender<ScanMsg>) -> (Vec<Vec<String>>, Option<Duration>) {
+    let mut pending: Vec<Vec<String>> = vec![];
+    let mut retry: Option<Duration> = None;
+    for entry in walkdir::WalkDir::new(media_path)
+        .into_iter()
+        .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.') || e.depth() == 0)
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Some(kind) = listed_kind(&entry.file_name().to_string_lossy()) else { continue };
+        let Ok(rel) = entry.path().strip_prefix(media_path) else { continue };
+        let parts: Vec<String> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+
+        let mut meta = Meta::default();
+        if kind == Kind::Video {
+            meta = load_metadata(media_path, &parts);
+            if !meta.probe_failed && (meta.duration.is_none() || (startup && !meta.subs_done)) {
+                // A modification time in the future (clock skew, preserved mtimes) counts as settled.
+                let age = entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok());
+                match age {
+                    Some(age) if age < SETTLE => {
+                        let wait = SETTLE - age + Duration::from_secs(1); // slack batches files copied together
+                        retry = Some(retry.map_or(wait, |r| r.min(wait)));
+                    }
+                    _ => pending.push(parts.clone()),
+                }
+            }
+        }
+        let _ = tx.send(ScanMsg::Entry { parts, kind, meta });
+    }
+    (pending, retry)
+}
+
+// The background scan, looping: walk, probe, then sleep until the media dir
+// changes (inotify, debounced) and walk again. The UI becomes browsable as
+// soon as a walk finishes and swaps in the entries it streamed. Pass 2
+// handles videos never probed, or without settled English subtitles: the mpv
+// preflight probe lists the tracks, and if there's no English subtitle among
+// them one is downloaded and the file re-probed so the new track shows up.
 pub fn spawn_scan(media_path: String, subtitles: crate::config::Subtitles, tx: Sender<ScanMsg>) {
     std::thread::spawn(move || {
-        let mut pending: Vec<Vec<String>> = vec![];
-        for entry in walkdir::WalkDir::new(&media_path)
-            .into_iter()
-            .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.') || e.depth() == 0)
-            .filter_map(|e| e.ok())
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy();
-            let kind = match entry.path().extension().and_then(|e| e.to_str()) {
-                Some("rvz" | "wbfs") => Kind::WiiGame,
-                Some("sh") => Kind::Script,
-                _ if is_audio(&name) || has_ext(&name, VIDEO_EXTS) => Kind::Video,
-                _ => continue,
-            };
-            let Ok(rel) = entry.path().strip_prefix(&media_path) else { continue };
-            let parts: Vec<String> = rel
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .collect();
-
-            let mut meta = Meta::default();
-            if kind == Kind::Video {
-                meta = load_metadata(&media_path, &parts);
-                if !meta.probe_failed && (meta.duration.is_none() || !meta.subs_done) {
-                    pending.push(parts.clone());
+        // Watch before the first walk so nothing slips in between. If the
+        // watcher can't start, its closure (and the sender) drops and the
+        // wait below ends the thread after the first scan.
+        let (wtx, wrx) = channel();
+        let root = PathBuf::from(&media_path);
+        use notify::Watcher as _;
+        let watcher = notify::recommended_watcher({
+            let root = root.clone();
+            // An error (e.g. queue overflow) may hide changes: rescan.
+            move |event: notify::Result<notify::Event>| {
+                if event.map_or(true, |e| affects_listing(&root, &e)) {
+                    let _ = wtx.send(());
                 }
             }
-            let _ = tx.send(ScanMsg::Entry { parts, kind, meta });
-        }
-        let _ = tx.send(ScanMsg::WalkDone);
+        })
+        .and_then(|mut w| w.watch(&root, notify::RecursiveMode::Recursive).map(|()| w));
+        let _watcher = watcher.map_err(|e| eprintln!("tiny-media-center: watching {media_path}: {e}"));
 
-        let mut probe_mpv = None;
-        let mut fetcher = crate::subtitles::Fetcher::new(subtitles);
-        for parts in pending {
-            let rel = parts.join("/");
-            let full = format!("{media_path}/{rel}");
-            let _ = tx.send(ScanMsg::Status(rel.clone()));
-            let mut result = crate::player::probe(&mut probe_mpv, &full);
-            let mut subs_done = false;
-            if let Some((_, tracks)) = &result {
-                // Forced-only / signs & songs tracks don't count: they leave
-                // most of the dialogue untranslated.
-                let has_english = tracks.iter().any(|(key, label)| {
-                    key.starts_with("track_sub_") && is_english(label) && track_rank(label, false).is_some_and(|r| r < 3)
-                });
-                // Audio files are in the video list too, but have nothing to subtitle.
-                subs_done = has_english || is_audio(&rel);
-                if !subs_done {
-                    match fetcher.fetch(std::path::Path::new(&full)) {
-                        Ok(downloaded) => {
-                            subs_done = true;
-                            if downloaded {
-                                result = crate::player::probe(&mut probe_mpv, &full);
+        let mut startup = true;
+        loop {
+            let (pending, retry) = walk(&media_path, startup, &tx);
+            startup = false;
+            let _ = tx.send(ScanMsg::WalkDone);
+
+            let mut probe_mpv = None;
+            let mut fetcher = crate::subtitles::Fetcher::new(subtitles.clone());
+            let mut changed = false;
+            for parts in pending {
+                let rel = parts.join("/");
+                let full = format!("{media_path}/{rel}");
+                let _ = tx.send(ScanMsg::Status(rel.clone()));
+                let mut result = crate::player::probe(&mut probe_mpv, &full);
+                let mut subs_done = false;
+                if let Some((_, tracks)) = &result {
+                    // Forced-only / signs & songs tracks don't count: they leave
+                    // most of the dialogue untranslated.
+                    let has_english = tracks.iter().any(|(key, label)| {
+                        key.starts_with("track_sub_") && is_english(label) && track_rank(label, false).is_some_and(|r| r < 3)
+                    });
+                    // Audio files are in the video list too, but have nothing to subtitle.
+                    subs_done = has_english || is_audio(&rel);
+                    if !subs_done {
+                        match fetcher.fetch(Path::new(&full)) {
+                            Ok(downloaded) => {
+                                subs_done = true;
+                                if downloaded {
+                                    result = crate::player::probe(&mut probe_mpv, &full);
+                                }
                             }
+                            Err(e) => eprintln!("tiny-media-center: subtitles for {rel}: {e}"),
                         }
-                        Err(e) => eprintln!("tiny-media-center: subtitles for {rel}: {e}"),
                     }
                 }
+                // Re-read the sidecar before writing: the user may have started
+                // watching this video (saving a position) while this pass ran.
+                let mut meta = load_metadata(&media_path, &parts);
+                meta.apply_probe(&result);
+                meta.subs_done = subs_done;
+                save_metadata(&media_path, &parts, &meta);
+                let _ = tx.send(ScanMsg::Probed { parts, result, subs_done });
+                // The library changed meanwhile: stop probing, the next walk redoes the list.
+                if wrx.try_recv().is_ok() {
+                    changed = true;
+                    break;
+                }
             }
-            // Re-read the sidecar before writing: the user may have started
-            // watching this video (saving a position) while this pass ran.
-            let mut meta = load_metadata(&media_path, &parts);
-            meta.apply_probe(&result);
-            meta.subs_done = subs_done;
-            save_metadata(&media_path, &parts, &meta);
-            let _ = tx.send(ScanMsg::Probed { parts, result, subs_done });
+            drop(probe_mpv);
+            let _ = tx.send(ScanMsg::Done);
+
+            if !changed {
+                match retry.map_or_else(|| wrx.recv().map_err(|_| RecvTimeoutError::Disconnected), |d| wrx.recv_timeout(d)) {
+                    Ok(()) => {}
+                    // A too-fresh file has settled by now.
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            while wrx.recv_timeout(DEBOUNCE).is_ok() {}
         }
-        let _ = tx.send(ScanMsg::Done);
     });
 }
 
@@ -370,6 +458,34 @@ mod tests {
         assert!(is_audio("a.flac") && is_audio("A.MP3") && is_audio("x.y.opus"));
         assert!(!is_audio("a.mkv") && !is_audio("mp3") && !is_audio("a.flac.tmc"));
         assert!(has_ext("a.MKV", VIDEO_EXTS) && has_ext("a.ts", VIDEO_EXTS) && !has_ext("a.txt", VIDEO_EXTS));
+    }
+
+    #[test]
+    fn event_filter() {
+        use notify::event::{AccessKind, AccessMode, CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode};
+        use notify::EventKind::{self, *};
+        let root = Path::new("/m");
+        let affects = |kind: EventKind, p: &str| affects_listing(root, &notify::Event::new(kind).add_path(p.into()));
+        let data = Modify(ModifyKind::Data(DataChange::Any));
+        let rename = Modify(ModifyKind::Name(RenameMode::To));
+        assert!(affects(Create(CreateKind::File), "/m/a/movie.mkv"));
+        assert!(affects(Remove(RemoveKind::File), "/m/a/song.FLAC"));
+        assert!(affects(data, "/m/movie.mp4")); // copy in progress
+        assert!(affects(Access(AccessKind::Close(AccessMode::Write)), "/m/movie.mp4"));
+        assert!(affects(Create(CreateKind::Folder), "/m/Season 1"));
+        assert!(affects(Remove(RemoveKind::Folder), "/m/Season 1"));
+        assert!(affects(rename, "/m/Season 2")); // directory or not, can't tell
+        assert!(affects(rename, "/m/game.rvz"));
+        // tmc's own writes, unlisted files, hidden entries, reads
+        assert!(!affects(Create(CreateKind::File), "/m/movie.mkv.tmc.tmp"));
+        assert!(!affects(rename, "/m/movie.mkv.tmc"));
+        assert!(!affects(rename, "/m/movie.en.srt"));
+        assert!(!affects(data, "/m/movie.mkv.tmc"));
+        assert!(!affects(Create(CreateKind::File), "/m/notes.txt"));
+        assert!(!affects(Create(CreateKind::File), "/m/.hidden/movie.mkv"));
+        assert!(!affects(rename, "/m/.movie.mkv.x1y2"));
+        assert!(!affects(Access(AccessKind::Open(AccessMode::Read)), "/m/movie.mkv"));
+        assert!(!affects(Create(CreateKind::Folder), "/other/dir"));
     }
 
     #[test]
