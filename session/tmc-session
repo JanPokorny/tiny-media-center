@@ -21,8 +21,6 @@ trap exit HUP INT TERM
 # Compositor: fixes black/white artifacts behind menu rounded corners
 # and shadows, enables transparency; vsync prevents video tearing
 picom --backend glx --vsync &
-# Notification daemon (used for the volume popup)
-dunst &
 # Bluetooth tray applet (pairing dialogs, auto-connect)
 blueman-applet &
 

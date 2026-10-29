@@ -31,8 +31,9 @@ or other window manager. At boot, the system unit `tmc-session.service`
 (written by a one-off root script outside this repo) opens a logind session
 for `tv` on tty1 and runs
 `startx ~/ghq/github.com/JanPokorny/tiny-media-center/session/tmc-session`.
-[session/tmc-session](session/tmc-session) starts picom, dunst and
-blueman-applet, then restarts tmc (the window manager) from `/media` until X
+[session/tmc-session](session/tmc-session) starts picom and
+blueman-applet, then restarts tmc (the window manager, which also shows
+the volume pop-up and notifications) from `/media` until X
 goes away. systemd restarts the whole session if X dies.
 
 ## configure

@@ -8,6 +8,7 @@ mod config;
 mod input;
 mod media;
 mod menu;
+mod overlay;
 mod player;
 mod subtitles;
 mod windows;
@@ -125,7 +126,7 @@ fn main() {
         .opengl()
         .build()
         .unwrap();
-    let _gl_context = window.gl_create_context().unwrap();
+    let gl_context = window.gl_create_context().unwrap();
     let _ = video.gl_set_swap_interval(1);
     sdl.mouse().show_cursor(false);
 
@@ -135,6 +136,7 @@ fn main() {
     };
     let mut canvas = Canvas::new(renderer).expect("femtovg canvas");
     let font = canvas.add_font_mem(FONT).expect("font");
+    let mut overlay = overlay::Overlay::new(&video, &window, &gl_context, FONT);
 
     let player = Player::new(&video, &mpv_dir.to_string_lossy()).expect("mpv");
 
@@ -204,6 +206,7 @@ fn main() {
         app.pump_external();
         app.pump_pair();
         app.pump_windows();
+        overlay.frame(&window, &gl_context, &app.config.style);
         if app.notice.as_ref().is_some_and(|(_, since)| since.elapsed() > Duration::from_secs(5)) {
             app.notice = None;
         }

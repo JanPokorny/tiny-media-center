@@ -5,6 +5,7 @@
 // implemented: no iconic state, desktops or frame extents. WM_STATE and
 // WM_TAKE_FOCUS are for Proton: without them its windows never hide or activate.
 
+use crate::overlay;
 use std::iter::successors;
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -55,11 +56,6 @@ const KEYS: [(u32, &str); 4] = [
     (0x1008ff11, "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),
     (0x1008ff12, "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),
 ];
-// Intentional simplification: dunst shows the volume until tmc draws its own overlay.
-const SHOW_VOLUME: &str = "s=$(wpctl get-volume @DEFAULT_AUDIO_SINK@); v=$(echo \"$s\" | awk '{print int($2*100)}'); \
-    case $s in *MUTED*) t=Muted;; *) t=\"Volume: $v%\";; esac; \
-    notify-send -u low -t 1000 -h string:x-dunst-stack-tag:volume -h int:value:$v \"$t\"";
-
 #[derive(Clone, PartialEq, Debug)]
 pub struct Win {
     pub id: Window,
@@ -147,6 +143,8 @@ impl X {
 static CONN: OnceLock<X> = OnceLock::new();
 // tmc's own window, found by WM_CLASS when it maps.
 static OWN: AtomicU32 = AtomicU32::new(NONE);
+// The notification overlay, which stays above everything else.
+static OVERLAY: AtomicU32 = AtomicU32::new(NONE);
 
 struct Client {
     id: Window,
@@ -265,8 +263,7 @@ impl Wm {
                 Some((_, "")) => self.activate(OWN.load(Relaxed))?,
                 Some(&(_, command)) => {
                     // Waited for on its own thread, so the WM never blocks and no zombie is left.
-                    let script = format!("{command}; {SHOW_VOLUME}");
-                    std::thread::spawn(move || std::process::Command::new("sh").arg("-c").arg(script).status());
+                    std::thread::spawn(move || overlay::volume_command(command));
                 }
                 None => {}
             },
@@ -354,6 +351,7 @@ impl Wm {
         for &window in &self.stack {
             x.conn.configure_window(window, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE))?;
         }
+        raise_overlay();
         let ids: Vec<_> = self.clients.iter().map(|c| c.id).collect();
         x.conn.change_property32(PropMode::REPLACE, x.root, a._NET_CLIENT_LIST, AtomEnum::WINDOW, &ids)?;
         let top = self.stack.last().copied().unwrap_or(NONE);
@@ -422,6 +420,19 @@ pub fn close(id: Window) {
         let _ = x.conn.kill_client(id);
     }
     let _ = x.conn.flush();
+}
+
+pub fn set_overlay(id: Window) {
+    OVERLAY.store(id, Relaxed);
+}
+
+pub fn raise_overlay() {
+    let overlay = OVERLAY.load(Relaxed);
+    if overlay != NONE {
+        let x = CONN.wait();
+        let _ = x.conn.configure_window(overlay, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
+        let _ = x.conn.flush();
+    }
 }
 
 pub fn raise_own() {

@@ -15,6 +15,7 @@ fastrand = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 ureq = { version = "3", features = ["json"] }
 x11rb = "0.14.0"
+zbus = "6.1.0"
 
 [features]
 # SDL3 is statically linked from source by default, since most distros don't
