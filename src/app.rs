@@ -20,6 +20,8 @@ pub enum Action {
     Heading,
     Open(String),
     Play,
+    // Hide the open video from continue watching and close it.
+    Dismiss,
     Tracks(TrackKind),
     SelectTrack(TrackKind, String),
     // Open the in-progress video at this path, as Open -> ... -> video would.
@@ -221,9 +223,9 @@ impl App {
         items
     }
 
-    // Partially watched video; music isn't tracked.
+    // Partially watched, not dismissed video; music isn't tracked.
     fn in_progress(name: &str, node: &Node) -> bool {
-        !media::is_audio(name) && (1..100).contains(&media::watch_pct(node))
+        !media::is_audio(name) && !node.meta.dismissed && (1..100).contains(&media::watch_pct(node))
     }
 
     // The latest in-progress videos, newest first (sidecars without a
@@ -348,8 +350,8 @@ impl App {
         out
     }
 
-    // Play / Audio [current] / Subtitles [current].
-    fn video_items(video: &Node) -> Vec<MenuItem<Action>> {
+    // Play / Audio [current] / Subtitles [current] / Dismiss from suggestions (in-progress only).
+    fn video_items(name: &str, video: &Node) -> Vec<MenuItem<Action>> {
         let meta = &video.meta;
         let label = |base: &str, kind| {
             let current = match meta.effective_selection(kind).as_deref() {
@@ -362,11 +364,15 @@ impl App {
                 None => base.to_string(),
             }
         };
-        vec![
+        let mut items = vec![
             MenuItem::new("Play".into(), Action::Play),
             MenuItem::new(label("Audio", TrackKind::Audio), Action::Tracks(TrackKind::Audio)),
             MenuItem::new(label("Subtitles", TrackKind::Sub), Action::Tracks(TrackKind::Sub)),
-        ]
+        ];
+        if Self::in_progress(name, video) {
+            items.push(MenuItem::new("Dismiss from suggestions".into(), Action::Dismiss));
+        }
+        items
     }
 
     // Available tracks sorted by id, with a "none" entry for subtitles.
@@ -442,6 +448,14 @@ impl App {
                 self.player.set_pause(false);
                 self.last_pos_save = Instant::now();
                 self.mode = Mode::Playing { osd_until: Instant::now() };
+            }
+            Action::Dismiss => {
+                let Some(path) = self.video_path() else { return };
+                if let Some(node) = media::get_node_mut(&mut self.tree, &path) {
+                    node.meta.dismissed = true;
+                    media::save_metadata(MEDIA_PATH, &path, &node.meta);
+                }
+                self.close_player();
             }
             Action::Tracks(kind) => {
                 let Some(video) = self.video_node() else { return };
@@ -524,7 +538,7 @@ impl App {
             Kind::Video => {
                 // Load right into the player, paused: the video menu is
                 // drawn over the still frame from here on.
-                let mut items = Self::video_items(child);
+                let mut items = Self::video_items(&name, child);
                 if media::is_audio(&name) {
                     items.truncate(1); // Play only
                 }
@@ -594,7 +608,7 @@ impl App {
         media::save_metadata(MEDIA_PATH, &video_path, &video.meta);
         // Apply to the loaded file too, so it takes effect right away.
         self.player.set_track(kind.prop(), &id);
-        let items = Self::video_items(video);
+        let items = Self::video_items(video_path.last().unwrap(), video);
         let selected = if kind == TrackKind::Audio { 1 } else { 2 };
         self.stack.pop();
         self.menu().set_items(items, selected);
@@ -617,8 +631,7 @@ impl App {
         let Some(path) = self.video_path() else { return };
         let position = self.player.time_pos;
         if let Some(node) = media::get_node_mut(&mut self.tree, &path) {
-            node.meta.position = Some(position);
-            node.meta.watched_at = SystemTime::now().duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs());
+            node.meta.mark_watched(position, SystemTime::now().duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs()));
             media::save_metadata(MEDIA_PATH, &path, &node.meta);
         }
         self.last_pos_save = Instant::now();
@@ -902,6 +915,11 @@ mod tests {
         // Newest first, capped at 5; the timestamp-less ones and music miss out.
         assert_eq!(labels, ["Show S01E02", "Show S01E04", "Show S01E00", "Show S01E05", "Show S01E03"]);
         tree.children.remove("Shows");
+        // Dismissed videos are left out, here and in folder listings.
+        tree.children.get_mut("Movies").unwrap().children.get_mut("Film.mkv").unwrap().meta.dismissed = true;
+        assert!(App::continue_items(&tree).is_empty());
+        assert_eq!(App::folder_items(&tree.children["Movies"]).len(), 2);
+        tree.children.get_mut("Movies").unwrap().children.get_mut("Film.mkv").unwrap().meta.dismissed = false;
         assert_eq!(App::continue_items(&tree)[0].label, "Film");
         assert!(matches!(&App::continue_items(&tree)[0].action, Action::Resume(p) if p == &["Movies", "Film.mkv"]));
     }
@@ -1023,8 +1041,20 @@ mod tests {
         node.meta.tracks.insert("track_audio_1".into(), "en/2ch".into());
         node.meta.aid = Some("1".into());
         node.meta.sid = Some("".into());
-        let labels: Vec<String> = App::video_items(&node).iter().map(|i| i.label.clone()).collect();
+        let labels: Vec<String> = App::video_items("a.mkv", &node).iter().map(|i| i.label.clone()).collect();
         assert_eq!(labels, ["Play", "Audio [en/2ch]", "Subtitles [none]"]);
+    }
+
+    #[test]
+    fn dismiss_item_only_for_undismissed_in_progress_videos() {
+        let mut node = video(Some(100.0), Some(50.0));
+        let labels = |node: &Node| -> Vec<String> { App::video_items("a.mkv", node).into_iter().map(|i| i.label).collect() };
+        assert_eq!(labels(&node).last().unwrap(), "Dismiss from suggestions");
+        node.meta.dismissed = true;
+        assert_eq!(labels(&node).len(), 3);
+        node.meta.dismissed = false;
+        node.meta.position = Some(99.0); // watched
+        assert_eq!(labels(&node).len(), 3);
     }
 
     #[test]
@@ -1034,7 +1064,7 @@ mod tests {
         node.meta.tracks.insert("track_audio_2".into(), "eng/6ch".into());
         node.meta.tracks.insert("track_sub_3".into(), "eng/SDH".into());
         node.meta.tracks.insert("track_sub_4".into(), "eng".into());
-        let labels: Vec<String> = App::video_items(&node).iter().map(|i| i.label.clone()).collect();
+        let labels: Vec<String> = App::video_items("a.mkv", &node).iter().map(|i| i.label.clone()).collect();
         assert_eq!(labels, ["Play", "Audio [eng/6ch]", "Subtitles [eng]"]);
     }
     #[test]

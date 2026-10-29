@@ -73,6 +73,9 @@ pub struct Meta {
     // Unix time of the last position save: Home lists the latest in-progress videos.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub watched_at: Option<u64>,
+    // Hidden from Home's continue watching until it is watched again.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dismissed: bool,
     #[serde(flatten)]
     pub tracks: BTreeMap<String, String>,
 }
@@ -125,6 +128,13 @@ impl Meta {
     }
 
     // Record a preflight probe's outcome (see ScanMsg::Probed).
+    // Playback ended at position: remember it, and bring the video back to suggestions.
+    pub fn mark_watched(&mut self, position: f64, now: Option<u64>) {
+        self.position = Some(position);
+        self.watched_at = now;
+        self.dismissed = false;
+    }
+
     pub fn apply_probe(&mut self, result: &Option<(f64, BTreeMap<String, String>)>) {
         match result {
             Some((duration, tracks)) => {
@@ -572,6 +582,12 @@ mod tests {
         assert_eq!(meta.watched_at, None); // older sidecars lack it
         let seen: Meta = toml::from_str("watched_at = 1700000000\ntrack_sub_1 = \"en\"\n").unwrap();
         assert_eq!(seen.watched_at, Some(1_700_000_000));
+        assert!(!seen.dismissed);
+        let mut meta = toml::from_str::<Meta>("position = 5\ndismissed = true\n").unwrap();
+        assert!(meta.dismissed && toml::to_string(&meta).unwrap().contains("dismissed = true"));
+        meta.mark_watched(7.0, Some(1));
+        assert_eq!((meta.position, meta.watched_at, meta.dismissed), (Some(7.0), Some(1), false));
+        assert!(!toml::to_string(&meta).unwrap().contains("dismissed"));
         assert_eq!(seen.track_label(TrackKind::Sub, "1"), Some("en"));
 
         let failed = Meta { probe_failed: true, ..Meta::default() };
