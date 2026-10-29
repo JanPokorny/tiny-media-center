@@ -375,7 +375,9 @@ impl App {
             MenuItem::new(label("Audio", TrackKind::Audio), Action::Tracks(TrackKind::Audio)),
             MenuItem::new(label("Subtitles", TrackKind::Sub), Action::Tracks(TrackKind::Sub)),
         ];
-        if Self::in_progress(name, video) {
+        if media::is_audio(name) {
+            items.truncate(1); // Play only
+        } else if Self::in_progress(name, video) {
             items.push(MenuItem::new("Dismiss from suggestions".into(), Action::Dismiss));
         }
         items
@@ -544,11 +546,7 @@ impl App {
             Kind::Video => {
                 // Load right into the player, paused: the video menu is
                 // drawn over the still frame from here on.
-                let mut items = Self::video_items(&name, child);
-                if media::is_audio(&name) {
-                    items.truncate(1); // Play only
-                }
-                let menu = Menu::new(items, 0);
+                let menu = Menu::new(Self::video_items(&name, child), 0);
                 let meta = &child.meta;
                 let start = match (meta.position, meta.duration) {
                     (Some(pos), Some(dur)) if pos < dur - 3.0 => Some(pos),
@@ -651,11 +649,18 @@ impl App {
     }
 
     // Playing -> Paused: freeze on the current frame and bring the menu up
-    // (the same state opening the video lands in).
+    // (the same state opening the video lands in), its items rebuilt for the
+    // progress just made.
     pub fn pause_player(&mut self) {
         self.player.set_pause(true);
         self.save_position();
         self.mode = Mode::Paused;
+        let Some(path) = self.video_path() else { return };
+        let Some(video) = media::get_node(&self.tree, &path) else { return };
+        let items = Self::video_items(path.last().unwrap(), video);
+        if let Some(Frame::Video { menu, .. }) = self.stack.last_mut() {
+            menu.update_items(items, 0);
+        }
     }
 
     fn seek_player(&mut self, secs: f64) {
@@ -1062,6 +1067,11 @@ mod tests {
         node.meta.dismissed = false;
         node.meta.position = Some(99.0); // watched
         assert_eq!(labels(&node).len(), 3);
+    }
+
+    #[test]
+    fn audio_files_get_play_only() {
+        assert_eq!(App::video_items("a.flac", &video(Some(100.0), Some(50.0))).len(), 1);
     }
 
     #[test]
