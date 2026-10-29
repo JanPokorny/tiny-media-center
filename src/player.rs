@@ -41,6 +41,8 @@ impl Player {
             init.set_option("vo", "libmpv")?;
             init.set_option("config", "yes")?;
             init.set_option("config-dir", mpv_config_dir)?;
+            init.set_option("hwdec", "auto-safe")?;
+            init.set_option("profile", "fast")?;
             // Pause on the last frame at EOF instead of unloading, so the
             // paused menu state can show it; the app watches eof-reached.
             init.set_option("keep-open", "yes")?;

@@ -99,18 +99,10 @@ fn main() {
     let subtitles = config::load();
     input::watch_controller_chord();
 
-    // Write the embedded mpv attachment files to the config dir. mpv.conf is
-    // only written when missing, so user edits to it survive restarts; the
-    // script and font are app internals and stay in sync with the binary.
+    // mpv finds the subtitle/OSD font as subfont.ttf in its config dir (~~).
     let mpv_dir = config::config_dir().join("mpv");
     let _ = std::fs::create_dir_all(&mpv_dir);
-    let mpv_conf = mpv_dir.join("mpv.conf");
-    if !mpv_conf.exists() {
-        let _ = std::fs::write(&mpv_conf, include_bytes!("../attachments/mpv/mpv.conf"));
-    }
     let _ = std::fs::write(mpv_dir.join("subfont.ttf"), FONT);
-    // Left behind by older versions (the audio visualiser script).
-    let _ = std::fs::remove_file(mpv_dir.join("visualiser.lua"));
 
     let sdl = sdl3::init().unwrap();
     let video = sdl.video().unwrap();
