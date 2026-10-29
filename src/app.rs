@@ -94,7 +94,10 @@ pub struct App {
     pub scan_status: String,
     scan_rx: Option<Receiver<ScanMsg>>,
     // Failures of launched programs, which run without blocking the UI.
-    launch_errors: (Sender<String>, Receiver<String>),
+    launch_errors: (Sender<Option<String>>, Receiver<Option<String>>),
+    // "Starting <name>" indication: since when, and the window ids that
+    // already existed (any other id means the app's window appeared).
+    pub launching: Option<(String, Instant, Vec<u32>)>,
     last_pos_save: Instant,
     // Selected item of the media root, kept across leaving it for Home.
     root_selection: Option<String>,
@@ -114,6 +117,7 @@ impl App {
             scan_status: String::new(),
             scan_rx: Some(scan_rx),
             launch_errors: channel(),
+            launching: None,
             last_pos_save: Instant::now(),
             root_selection: None,
             windows: vec![],
@@ -460,6 +464,8 @@ impl App {
         let name = path.last().cloned().unwrap_or_default();
         let is_game = kind == Kind::WiiGame;
         let errors = self.launch_errors.0.clone();
+        let shown = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem).to_string();
+        self.launching = Some((shown, Instant::now(), self.windows.iter().map(|w| w.id).collect()));
         std::thread::spawn(move || {
             let status = if is_game {
                 let mut cmd = Command::new("systemd-run");
@@ -472,9 +478,9 @@ impl App {
                 Command::new("bash").arg(&full).status()
             };
             let error = match status {
-                Ok(status) if status.success() => return,
-                Ok(status) => format!("{name}: {status}"),
-                Err(e) => format!("{name}: {e}"),
+                Ok(status) if status.success() => None,
+                Ok(status) => Some(format!("{name}: {status}")),
+                Err(e) => Some(format!("{name}: {e}")),
             };
             let _ = errors.send(error);
         });
@@ -629,6 +635,9 @@ impl App {
         let was_empty = self.windows.is_empty();
         self.windows = windows;
         let windows = &self.windows;
+        if self.launching.as_ref().is_some_and(|(_, _, old)| windows.iter().any(|w| !old.contains(&w.id))) {
+            self.launching = None;
+        }
         let mut popped = false;
         while self
             .stack
@@ -659,8 +668,14 @@ impl App {
 
     // Check on a running external command; surface its failure if any.
     pub fn pump_external(&mut self) {
-        while let Ok(message) = self.launch_errors.1.try_recv() {
-            self.show_notice(message);
+        while let Ok(error) = self.launch_errors.1.try_recv() {
+            self.launching = None;
+            if let Some(message) = error {
+                self.show_notice(message);
+            }
+        }
+        if self.launching.as_ref().is_some_and(|(_, since, _)| since.elapsed() > Duration::from_secs(30)) {
+            self.launching = None;
         }
         let Mode::External { rx, .. } = &self.mode else { return };
         let error = match rx.try_recv() {

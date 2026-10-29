@@ -303,6 +303,15 @@ fn main() {
 
             let _ = canvas.fill_text(0.0, 0.0, app.title(), &dim_paint);
 
+            if let Some((name, since, _)) = &app.launching {
+                let mut shade = Path::new();
+                shade.rect(0.0, 0.0, wf, hf);
+                canvas.fill_path(&shade, &Paint::color(color(BACKGROUND_COLOR, 0.6)));
+                let pulse = 0.65 + 0.35 * (since.elapsed().as_secs_f32() * 4.0).sin();
+                let paint = dim_paint.clone().with_color(color(TEXT_COLOR, pulse));
+                draw_centered(&mut canvas, &format!("Starting {name}..."), (hf - FONT_SIZE) / 2.0, wf, &paint);
+            }
+
             if let Some(video) = app.video_node() {
                 let pct = media::watch_pct(video);
                 let time_text = video
