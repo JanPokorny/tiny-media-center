@@ -179,11 +179,11 @@ fn main() {
                     }
                     scroll_buffer += y;
                     while scroll_buffer >= 1.0 {
-                        app.menu().navigate_up(false);
+                        app.menu().navigate(false, false);
                         scroll_buffer -= 1.0;
                     }
                     while scroll_buffer <= -1.0 {
-                        app.menu().navigate_down(false);
+                        app.menu().navigate(true, false);
                         scroll_buffer += 1.0;
                     }
                 }
