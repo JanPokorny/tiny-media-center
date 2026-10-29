@@ -11,7 +11,7 @@ use crate::player::Player;
 use crate::windows::{self, Msg, Win, Window};
 use std::process::Command;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, PartialEq)]
 pub enum Action {
@@ -20,6 +20,8 @@ pub enum Action {
     Tracks(TrackKind),
     SelectTrack(TrackKind, String),
     Browse,
+    // Open the in-progress video at this path, as Open -> ... -> video would.
+    Resume(Vec<String>),
     Audio,
     SetSink(String),
     // The device, and whether it needs pairing first.
@@ -110,7 +112,7 @@ impl App {
         App {
             tree: Node::default(),
             walking: Node::default(),
-            stack: vec![Frame::Home { menu: Menu::new(Self::home_items(&[]), 0) }],
+            stack: vec![Frame::Home { menu: Menu::new(Self::home_items(&[], vec![]), 0) }],
             mode: Mode::Scanning,
             player,
             notice: None,
@@ -193,14 +195,15 @@ impl App {
         items.iter().position(|i| matches!(&i.action, Action::Open(m) if m == name))
     }
 
-    // Other apps' windows / Open / Audio [current output] / Shut down.
-    fn home_items(windows: &[Win]) -> Vec<MenuItem<Action>> {
+    // Other apps' windows / continue watching / Open / Audio [current output] / Shut down.
+    fn home_items(windows: &[Win], resume: Vec<MenuItem<Action>>) -> Vec<MenuItem<Action>> {
         let default = audio::default_sink();
         let audio = match audio::sinks().into_iter().find(|s| s.name == default) {
             Some(sink) => format!("Audio [{}]", sink.description),
             None => "Audio".into(),
         };
         let mut items = Self::window_items(windows);
+        items.extend(resume);
         items.push(MenuItem::new("Open".into(), Action::Browse));
         items.push(MenuItem::new(audio, Action::Audio));
         items.push(MenuItem::new("Shut down".into(), Action::Shutdown));
@@ -209,6 +212,53 @@ impl App {
 
     fn window_items(windows: &[Win]) -> Vec<MenuItem<Action>> {
         windows.iter().map(|w| MenuItem::new(format!("* {}", w.title), Action::Window(w.id))).collect()
+    }
+
+    // The latest in-progress videos, newest first (sidecars without a
+    // timestamp last). Music isn't tracked.
+    fn continue_items(tree: &Node) -> Vec<MenuItem<Action>> {
+        fn walk(node: &Node, path: &mut Vec<String>, out: &mut Vec<(Option<u64>, Vec<String>)>) {
+            for (name, child) in &node.children {
+                path.push(name.clone());
+                if child.kind == Kind::Directory {
+                    walk(child, path, out);
+                } else if !media::is_audio(name) && (1..100).contains(&media::watch_pct(child)) {
+                    out.push((child.meta.watched_at, path.clone()));
+                }
+                path.pop();
+            }
+        }
+        let mut found = vec![];
+        walk(tree, &mut vec![], &mut found);
+        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found
+            .into_iter()
+            .take(5)
+            .map(|(_, path)| {
+                let stem = media::strip_extension(path.last().unwrap());
+                // Episodes sit in a show folder below the category (Shows/<show>/...).
+                let label = match path.len() {
+                    3.. => format!("+ {} {stem}", path[path.len() - 2]),
+                    _ => format!("+ {stem}"),
+                };
+                MenuItem::new(label, Action::Resume(path))
+            })
+            .collect()
+    }
+
+    // Swap Home's continue-watching items without rebuilding the rest (that runs pactl).
+    fn refresh_continue(&mut self) {
+        let resume = Self::continue_items(&self.tree);
+        let Some(Frame::Home { menu }) = self.stack.first_mut() else { return };
+        let (mut items, rest): (Vec<_>, Vec<_>) = menu
+            .items
+            .iter()
+            .filter(|i| !matches!(i.action, Action::Resume(_)))
+            .cloned()
+            .partition(|i| matches!(i.action, Action::Window(_)));
+        items.extend(resume);
+        items.extend(rest);
+        Self::keep_selection(menu, items);
     }
 
     // Replace a menu's items keeping the selection by action: items come and
@@ -238,7 +288,7 @@ impl App {
 
     pub fn refresh_home(&mut self) {
         if let [Frame::Home { menu }] = self.stack.as_mut_slice() {
-            Self::keep_selection(menu, Self::home_items(&self.windows));
+            Self::keep_selection(menu, Self::home_items(&self.windows, Self::continue_items(&self.tree)));
         }
     }
 
@@ -352,7 +402,6 @@ impl App {
             self.close_player();
         }
         self.stack.truncate(1);
-        self.refresh_home();
         self.menu().reset_scroll();
     }
 
@@ -382,6 +431,7 @@ impl App {
                 self.stack.push(Frame::Tracks { kind, menu: Menu::new(items, selected) });
             }
             Action::SelectTrack(kind, id) => self.select_track(kind, id),
+            Action::Resume(path) => self.resume(path),
             Action::Browse => {
                 let items = Self::directory_items(&self.tree);
                 let selected = self
@@ -427,6 +477,24 @@ impl App {
                 self.show_notice(message);
             }
         }
+    }
+
+    // The stack Open -> ... -> video would leave, so Back walks up the library.
+    fn resume(&mut self, path: Vec<String>) {
+        let Some((file, dirs)) = path.split_last() else { return };
+        let mut frames = vec![];
+        let mut node = &self.tree;
+        for (i, name) in std::iter::once(None).chain(dirs.iter().map(Some)).enumerate() {
+            if let Some(name) = name {
+                let Some(child) = node.children.get(name) else { return };
+                node = child;
+            }
+            let items = Self::directory_items(node);
+            let selected = Self::item_index(&items, &path[i]).unwrap_or(0);
+            frames.push(Frame::Dir { name: name.cloned(), menu: Menu::new(items, selected) });
+        }
+        self.stack.extend(frames);
+        self.open(file.clone());
     }
 
     fn open(&mut self, name: String) {
@@ -539,6 +607,7 @@ impl App {
         let position = self.player.time_pos;
         if let Some(node) = media::get_node_mut(&mut self.tree, &path) {
             node.meta.position = Some(position);
+            node.meta.watched_at = SystemTime::now().duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs());
             media::save_metadata(MEDIA_PATH, &path, &node.meta);
         }
         self.last_pos_save = Instant::now();
@@ -634,6 +703,7 @@ impl App {
             Mode::Browse | Mode::Paused => sync_dirs(&mut self.stack, &self.tree),
             _ => {}
         }
+        self.refresh_continue();
     }
 
     // Take the latest window list from the window manager; leave window frames
@@ -806,6 +876,33 @@ mod tests {
         let items = App::directory_items(&dir);
         assert_eq!(items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["a", "b"]);
         assert!(items.iter().all(|i| !i.dim));
+    }
+
+    #[test]
+    fn continue_items_newest_first_capped_videos_only() {
+        let mut tree = Node::default();
+        let mut show = Node::default();
+        for (i, at) in [Some(5), None, Some(9), Some(1), Some(7), Some(3)].into_iter().enumerate() {
+            let mut ep = video(Some(100.0), Some(50.0));
+            ep.meta.watched_at = at;
+            show.children.insert(format!("S01E0{i}.mkv"), ep);
+        }
+        show.children.insert("done.mkv".into(), video(Some(100.0), Some(99.0)));
+        let mut shows = Node::default();
+        shows.children.insert("Show".into(), show);
+        tree.children.insert("Shows".into(), shows);
+        let mut movies = Node::default();
+        movies.children.insert("Film.mkv".into(), video(Some(100.0), Some(10.0)));
+        movies.children.insert("song.flac".into(), video(Some(100.0), Some(10.0)));
+        tree.children.insert("Movies".into(), movies);
+
+        let items = App::continue_items(&tree);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        // Newest first, capped at 5; the timestamp-less ones and music miss out.
+        assert_eq!(labels, ["+ Show S01E02", "+ Show S01E04", "+ Show S01E00", "+ Show S01E05", "+ Show S01E03"]);
+        tree.children.remove("Shows");
+        assert_eq!(App::continue_items(&tree)[0].label, "+ Film");
+        assert!(matches!(&App::continue_items(&tree)[0].action, Action::Resume(p) if p == &["Movies", "Film.mkv"]));
     }
 
     #[test]

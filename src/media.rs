@@ -70,6 +70,9 @@ pub struct Meta {
     // of quota), so the next scan retries.
     #[serde(default, skip_serializing_if = "is_false")]
     pub subs_done: bool,
+    // Unix time of the last position save: Home lists the latest in-progress videos.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub watched_at: Option<u64>,
     #[serde(flatten)]
     pub tracks: BTreeMap<String, String>,
 }
@@ -566,6 +569,10 @@ mod tests {
         assert!(out.contains("track_sub_1"));
         assert!(!out.contains("probe_failed")); // false is not serialized
         assert!(!out.contains("sid")); // None is not serialized
+        assert_eq!(meta.watched_at, None); // older sidecars lack it
+        let seen: Meta = toml::from_str("watched_at = 1700000000\ntrack_sub_1 = \"en\"\n").unwrap();
+        assert_eq!(seen.watched_at, Some(1_700_000_000));
+        assert_eq!(seen.track_label(TrackKind::Sub, "1"), Some("en"));
 
         let failed = Meta { probe_failed: true, ..Meta::default() };
         let reparsed: Meta = toml::from_str(&toml::to_string(&failed).unwrap()).unwrap();
