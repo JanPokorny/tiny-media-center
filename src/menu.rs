@@ -78,6 +78,36 @@ impl<A> Menu<A> {
         }
     }
 
+    // Index of the first item of the run of items sharing i's first letter.
+    fn group_start(&self, i: usize) -> usize {
+        let key = |i: usize| self.items[i].jump.chars().next();
+        (0..=i).rev().take_while(|&j| key(j) == key(i)).last().unwrap_or(i)
+    }
+
+    // Right: first item of the next letter group. Left: first item of the
+    // current group, or of the previous one when already on it. wrap: step
+    // past either end to the other (fresh presses only).
+    pub fn jump_group(&mut self, forward: bool, wrap: bool) {
+        let Some(last) = self.items.len().checked_sub(1) else { return };
+        let start = self.group_start(self.selected);
+        self.selected = if forward {
+            let key = |i: usize| self.items[i].jump.chars().next();
+            match (self.selected..=last).find(|&i| key(i) != key(self.selected)) {
+                Some(next) => next,
+                None if wrap => 0,
+                None => self.selected,
+            }
+        } else if self.selected > start {
+            start
+        } else if start > 0 {
+            self.group_start(start - 1)
+        } else if wrap {
+            self.group_start(last)
+        } else {
+            self.selected
+        };
+    }
+
     pub fn draw<R: Renderer>(
         &mut self,
         canvas: &mut Canvas<R>,
@@ -181,6 +211,28 @@ mod tests {
         empty.navigate_up(true);
         empty.navigate_down(true);
         assert_eq!(empty.selected, 0);
+    }
+
+    #[test]
+    fn left_right_jump_between_letter_groups() {
+        let mut m = menu(&["a1", "a2", "b1", "b2", "b3", "c1"]);
+        m.items.iter_mut().for_each(|i| i.jump = i.label.clone());
+        m.jump_group(true, true);
+        assert_eq!(m.selected, 2); // a -> b
+        m.selected = 3;
+        m.jump_group(false, true);
+        assert_eq!(m.selected, 2); // inside a group: its first item
+        m.jump_group(false, true);
+        assert_eq!(m.selected, 0); // on the first item: previous group
+        m.jump_group(false, false);
+        assert_eq!(m.selected, 0); // autorepeat doesn't wrap
+        m.jump_group(false, true);
+        assert_eq!(m.selected, 5); // fresh press wraps to the last group
+        m.jump_group(true, false);
+        assert_eq!(m.selected, 5);
+        m.jump_group(true, true);
+        assert_eq!(m.selected, 0);
+        menu(&[]).jump_group(true, true);
     }
 
     #[test]

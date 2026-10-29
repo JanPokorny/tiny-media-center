@@ -325,8 +325,8 @@ impl App {
                 // Both back and confirm leave playback for the paused menu.
                 Input::Confirm | Input::Back => self.pause_player(),
                 Input::Home => self.go_home(),
-                Input::Left => self.seek_player(-5.0),
-                Input::Right => self.seek_player(5.0),
+                Input::Left(_) => self.seek_player(-5.0),
+                Input::Right(_) => self.seek_player(5.0),
                 Input::Up(_) => self.player.add_sub_delay(-0.5),
                 Input::Down(_) => self.player.add_sub_delay(0.5),
                 Input::Letter(_) => {}
@@ -339,7 +339,8 @@ impl App {
                 Input::Back => self.navigate_out(),
                 Input::Home => self.go_home(),
                 Input::Letter(c) => self.menu().jump_to_letter(c),
-                Input::Left | Input::Right => {}
+                Input::Left(repeat) => self.menu().jump_group(false, !repeat),
+                Input::Right(repeat) => self.menu().jump_group(true, !repeat),
             }
         }
     }

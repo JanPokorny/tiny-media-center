@@ -16,10 +16,11 @@ use std::time::Duration;
 #[derive(Clone, Copy)]
 pub enum Input {
     // The flag marks key autorepeat, which must not wrap around menu ends.
+    // Left/Right seek while playing and jump between letter groups in menus.
     Up(bool),
     Down(bool),
-    Left,
-    Right,
+    Left(bool),
+    Right(bool),
     Confirm,
     Back,
     // Straight to the Home menu, from anywhere.
@@ -58,8 +59,8 @@ pub fn translate(event: &Event) -> Option<Input> {
         Event::KeyDown { keycode: Some(key), repeat, .. } => match key {
             Keycode::Up => Some(Input::Up(*repeat)),
             Keycode::Down => Some(Input::Down(*repeat)),
-            Keycode::Left => Some(Input::Left),
-            Keycode::Right => Some(Input::Right),
+            Keycode::Left => Some(Input::Left(*repeat)),
+            Keycode::Right => Some(Input::Right(*repeat)),
             Keycode::Return => Some(Input::Confirm),
             // Sleep is the power button on some remotes.
             Keycode::Escape | Keycode::AcBack | Keycode::Sleep => Some(Input::Back),
@@ -77,8 +78,8 @@ pub fn translate(event: &Event) -> Option<Input> {
         Event::ControllerButtonDown { button, .. } => match button {
             Button::DPadUp => Some(Input::Up(false)),
             Button::DPadDown => Some(Input::Down(false)),
-            Button::DPadLeft => Some(Input::Left),
-            Button::DPadRight => Some(Input::Right),
+            Button::DPadLeft => Some(Input::Left(false)),
+            Button::DPadRight => Some(Input::Right(false)),
             Button::South => Some(Input::Confirm),
             Button::East => Some(Input::Back),
             _ => None,
