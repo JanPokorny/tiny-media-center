@@ -54,14 +54,17 @@ impl<A> Menu<A> {
         self.selected = selected;
     }
 
-    pub fn navigate_up(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+    // wrap: step past either end to the other (fresh presses only).
+    pub fn navigate_up(&mut self, wrap: bool) {
+        self.selected = match self.selected {
+            0 if wrap && !self.items.is_empty() => self.items.len() - 1,
+            n => n.saturating_sub(1),
+        };
     }
 
-    pub fn navigate_down(&mut self) {
-        if !self.items.is_empty() {
-            self.selected = (self.selected + 1).min(self.items.len() - 1);
-        }
+    pub fn navigate_down(&mut self, wrap: bool) {
+        let last = self.items.len().saturating_sub(1);
+        self.selected = if self.selected >= last && wrap { 0 } else { (self.selected + 1).min(last) };
     }
 
     pub fn jump_to_letter(&mut self, key: char) {
@@ -160,6 +163,23 @@ mod tests {
 
     fn menu(names: &[&str]) -> Menu<()> {
         Menu::new(names.iter().map(|n| MenuItem::new(n.to_string(), ())).collect(), 0)
+    }
+
+    #[test]
+    fn navigation_wraps_only_when_asked() {
+        let mut m = menu(&["a", "b", "c"]);
+        m.navigate_up(false);
+        assert_eq!(m.selected, 0);
+        m.navigate_up(true);
+        assert_eq!(m.selected, 2);
+        m.navigate_down(false);
+        assert_eq!(m.selected, 2);
+        m.navigate_down(true);
+        assert_eq!(m.selected, 0);
+        let mut empty = menu(&[]);
+        empty.navigate_up(true);
+        empty.navigate_down(true);
+        assert_eq!(empty.selected, 0);
     }
 
     #[test]

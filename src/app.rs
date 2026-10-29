@@ -327,14 +327,14 @@ impl App {
                 Input::Confirm | Input::Back => self.pause_player(),
                 Input::Left => self.seek_player(-5.0),
                 Input::Right => self.seek_player(5.0),
-                Input::Up => self.player.add_sub_delay(-0.5),
-                Input::Down => self.player.add_sub_delay(0.5),
+                Input::Up(_) => self.player.add_sub_delay(-0.5),
+                Input::Down(_) => self.player.add_sub_delay(0.5),
                 Input::Letter(_) => {}
             }
         } else if matches!(self.mode, Mode::Browse | Mode::Paused) {
             match input {
-                Input::Up => self.menu().navigate_up(),
-                Input::Down => self.menu().navigate_down(),
+                Input::Up(repeat) => self.menu().navigate_up(!repeat),
+                Input::Down(repeat) => self.menu().navigate_down(!repeat),
                 Input::Confirm => self.navigate_in(),
                 Input::Back => self.navigate_out(),
                 Input::Letter(c) => self.menu().jump_to_letter(c),

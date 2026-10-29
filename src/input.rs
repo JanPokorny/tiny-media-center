@@ -15,8 +15,9 @@ use std::time::Duration;
 
 #[derive(Clone, Copy)]
 pub enum Input {
-    Up,
-    Down,
+    // The flag marks key autorepeat, which must not wrap around menu ends.
+    Up(bool),
+    Down(bool),
     Left,
     Right,
     Confirm,
@@ -26,9 +27,9 @@ pub enum Input {
 
 pub fn translate(event: &Event) -> Option<Input> {
     match event {
-        Event::KeyDown { keycode: Some(key), .. } => match key {
-            Keycode::Up => Some(Input::Up),
-            Keycode::Down => Some(Input::Down),
+        Event::KeyDown { keycode: Some(key), repeat, .. } => match key {
+            Keycode::Up => Some(Input::Up(*repeat)),
+            Keycode::Down => Some(Input::Down(*repeat)),
             Keycode::Left => Some(Input::Left),
             Keycode::Right => Some(Input::Right),
             Keycode::Return => Some(Input::Confirm),
@@ -44,8 +45,8 @@ pub fn translate(event: &Event) -> Option<Input> {
             }
         },
         Event::ControllerButtonDown { button, .. } => match button {
-            Button::DPadUp => Some(Input::Up),
-            Button::DPadDown => Some(Input::Down),
+            Button::DPadUp => Some(Input::Up(false)),
+            Button::DPadDown => Some(Input::Down(false)),
             Button::DPadLeft => Some(Input::Left),
             Button::DPadRight => Some(Input::Right),
             Button::South => Some(Input::Confirm),
