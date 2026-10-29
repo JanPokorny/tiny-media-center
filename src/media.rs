@@ -189,7 +189,7 @@ pub struct Node {
 const VIDEO_EXTS: &[&str] =
     &["mkv", "mp4", "m4v", "avi", "mov", "wmv", "webm", "mpg", "mpeg", "ts", "m2ts", "mts", "flv", "ogv", "3gp", "vob"];
 const AUDIO_EXTS: &[&str] =
-    &["mp3", "flac", "ogg", "oga", "opus", "m4a", "aac", "wav", "wma", "alac", "aiff", "ape", "mka"];
+    &["mp3", "flac", "ogg", "oga", "opus", "m4a", "aac", "wav", "wma", "aiff", "ape", "mka"];
 
 fn has_ext(name: &str, exts: &[&str]) -> bool {
     let ext = std::path::Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("");
