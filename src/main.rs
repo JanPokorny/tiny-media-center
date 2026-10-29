@@ -4,6 +4,7 @@
 mod app;
 mod audio;
 mod background;
+mod bluetooth;
 mod config;
 mod input;
 mod media;
@@ -128,6 +129,7 @@ fn main() {
     let mut canvas = Canvas::new(renderer).expect("femtovg canvas");
     let font = canvas.add_font_mem(FONT).expect("font");
     let mut overlay = overlay::Overlay::new(&video, &window, &gl_context, FONT);
+    bluetooth::serve();
 
     let player = Player::new(&video, &mpv_dir.to_string_lossy()).expect("mpv");
 
@@ -197,6 +199,9 @@ fn main() {
         app.pump_external();
         app.pump_pair();
         app.pump_windows();
+        if bluetooth::CHANGED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            app.refresh_home();
+        }
         overlay.frame(&window, &gl_context);
         if app.notice.as_ref().is_some_and(|(_, since)| since.elapsed() > Duration::from_secs(5)) {
             app.notice = None;

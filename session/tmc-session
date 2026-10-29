@@ -21,8 +21,6 @@ trap exit HUP INT TERM
 # Compositor: fixes black/white artifacts behind menu rounded corners
 # and shadows, enables transparency; vsync prevents video tearing
 picom --backend glx --vsync &
-# Bluetooth tray applet (pairing dialogs, auto-connect)
-blueman-applet &
 
 # tmc _exit(1)s when X goes away, so check X before each restart; the sleep
 # keeps an instantly crashing tmc from spinning.

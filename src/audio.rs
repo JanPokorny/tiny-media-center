@@ -2,6 +2,7 @@
 // through bluetoothctl. Everything here shells out and blocks; the slow parts
 // (connecting, pairing, discovery) run on worker threads.
 
+use crate::bluetooth::Pairing;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
@@ -104,6 +105,8 @@ fn btctl(args: &[&str]) -> Result<(), String> {
 // its sink to show up and make it the default output.
 pub fn connect(device: &BtDevice, pair: bool) -> Option<String> {
     let mac = device.mac.as_str();
+    // The Pair new screen has closed by now; its pairing requests still come.
+    let _pairing = pair.then(Pairing::start);
     let trust: &[&str] = &["5", "bluetoothctl", "trust", mac];
     let pair_step: &[&str] = &["30", "bluetoothctl", "pair", mac];
     let connect: &[&str] = &["20", "bluetoothctl", "connect", mac];
@@ -128,6 +131,7 @@ pub struct Discovery {
     pub rx: Receiver<Vec<BtDevice>>,
     // Discovery lasts as long as the bluetoothctl client that started it.
     scan: Child,
+    _pairing: Pairing,
 }
 
 impl Discovery {
@@ -158,7 +162,7 @@ pub fn discover() -> std::io::Result<Discovery> {
             break;
         }
     });
-    Ok(Discovery { rx, scan })
+    Ok(Discovery { rx, scan, _pairing: Pairing::start() })
 }
 
 #[cfg(test)]

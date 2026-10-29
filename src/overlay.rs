@@ -161,6 +161,11 @@ pub fn show_volume((level, muted): (f32, bool)) {
     state().volume = Some((level, muted, Instant::now() + VOLUME_TIME));
 }
 
+// A notification from tmc itself, with the default timeout.
+pub fn notify(app: &str, summary: String) {
+    state().notify(0, app.into(), summary, String::new(), -1, Instant::now());
+}
+
 // Runs a wpctl command, then pops up the resulting volume. One at a time, so
 // that key autorepeat can't show an older level last.
 pub fn volume_command(command: &str) {
