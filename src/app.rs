@@ -265,7 +265,13 @@ impl App {
     fn update_home(&mut self) {
         let Some(Frame::Home { menu }) = self.stack.first_mut() else { return };
         let audio = menu.items.iter().find(|i| i.action == Action::Audio).cloned().unwrap_or_else(Self::audio_item);
-        Self::keep_selection(menu, Self::home_items(&self.windows, &self.tree, audio));
+        let items = Self::home_items(&self.windows, &self.tree, audio);
+        // The loading screen's placeholder Home has nothing worth keeping selected.
+        if matches!(self.mode, Mode::Scanning) {
+            menu.update_items(items, 0);
+        } else {
+            Self::keep_selection(menu, items);
+        }
     }
 
     // Index in items of the menu's selected action. Folders list in-progress
@@ -677,7 +683,7 @@ impl App {
     // later walks (the library changed) swap the tree in silently.
     pub fn pump_scan(&mut self) {
         let Some(rx) = self.scan_rx.take() else { return };
-        let mut refresh = false;
+        let (mut refresh, mut walked) = (false, false);
         loop {
             match rx.try_recv() {
                 Ok(ScanMsg::Status(status)) => self.scan_status = status,
@@ -688,10 +694,8 @@ impl App {
                     let mut tree = std::mem::take(&mut self.walking);
                     media::keep_meta(&self.tree, &mut tree);
                     self.tree = tree;
-                    if matches!(self.mode, Mode::Scanning) {
-                        self.mode = Mode::Browse;
-                    }
                     refresh = true;
+                    walked = true;
                 }
                 Ok(ScanMsg::Probed { parts, result, subs_done }) => {
                     // Mirror what the scan saved, so later saves from here
@@ -715,6 +719,9 @@ impl App {
         }
         if refresh {
             self.refresh_dirs();
+        }
+        if walked && matches!(self.mode, Mode::Scanning) {
+            self.mode = Mode::Browse;
         }
     }
 
