@@ -148,7 +148,7 @@ fn main() {
         let busy = matches!(app.mode, Mode::Scanning | Mode::External { .. });
         let playing = matches!(app.mode, Mode::Playing { .. });
 
-        for event in event_pump.poll_iter() {
+        for event in input::poll(&mut event_pump) {
             match event {
                 Event::Quit { .. } => break 'running,
                 Event::ControllerDeviceAdded { which, .. } => {

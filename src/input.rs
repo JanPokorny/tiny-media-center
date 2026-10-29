@@ -25,6 +25,32 @@ pub enum Input {
     Letter(char),
 }
 
+// sdl3's own poll_iter panics converting gamepad buttons/axes its enums don't
+// know (newer SDL emits e.g. MISC6); drop those events before converting.
+pub fn poll(_pump: &mut sdl3::EventPump) -> impl Iterator<Item = Event> {
+    use sdl3::sys::{events::*, gamepad::*};
+    std::iter::from_fn(|| loop {
+        let mut raw = std::mem::MaybeUninit::uninit();
+        if !unsafe { SDL_PollEvent(raw.as_mut_ptr()) } {
+            return None;
+        }
+        let raw = unsafe { raw.assume_init() };
+        let known = match SDL_EventType(unsafe { raw.r#type }) {
+            SDL_EVENT_GAMEPAD_BUTTON_DOWN | SDL_EVENT_GAMEPAD_BUTTON_UP => {
+                Button::from_ll(SDL_GamepadButton(unsafe { raw.gbutton.button } as i32)).is_some()
+            }
+            SDL_EVENT_GAMEPAD_AXIS_MOTION => sdl3::gamepad::Axis::from_ll(SDL_GamepadAxis(
+                unsafe { raw.gaxis.axis } as i32,
+            ))
+            .is_some(),
+            _ => true,
+        };
+        if known {
+            return Some(Event::from_ll(raw));
+        }
+    })
+}
+
 pub fn translate(event: &Event) -> Option<Input> {
     match event {
         Event::KeyDown { keycode: Some(key), repeat, .. } => match key {
@@ -118,6 +144,7 @@ fn chord_step(held: &mut (bool, bool), code: u16, value: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sdl3::sys::{events::*, gamepad::*};
 
     #[test]
     fn chord_fires_once_when_both_held() {
@@ -130,5 +157,26 @@ mod tests {
         assert!(!chord_step(&mut held, KEY_TAB, 1)); // Tab alone
         assert!(!chord_step(&mut held, 30, 1)); // other key
         assert!(chord_step(&mut held, KEY_ESC, 1)); // reverse order
+    }
+
+    // SDL events only; no display needed.
+    #[test]
+    fn poll_drops_unknown_gamepad_inputs() {
+        let sdl = sdl3::init().unwrap();
+        let mut pump = sdl.event_pump().unwrap();
+        let push = |ty: SDL_EventType, button: u8, axis: u8| unsafe {
+            let mut e = SDL_Event { r#type: ty.0 };
+            match ty {
+                SDL_EVENT_GAMEPAD_AXIS_MOTION => e.gaxis.axis = axis,
+                _ => e.gbutton.button = button,
+            }
+            assert!(SDL_PushEvent(&mut e));
+        };
+        push(SDL_EVENT_GAMEPAD_BUTTON_DOWN, 200, 0);
+        push(SDL_EVENT_GAMEPAD_BUTTON_UP, 200, 0);
+        push(SDL_EVENT_GAMEPAD_AXIS_MOTION, 0, 200);
+        push(SDL_EVENT_GAMEPAD_BUTTON_DOWN, SDL_GAMEPAD_BUTTON_SOUTH.0 as u8, 0);
+        let events: Vec<_> = poll(&mut pump).collect();
+        assert!(matches!(events[..], [Event::ControllerButtonDown { button: Button::South, .. }]));
     }
 }
