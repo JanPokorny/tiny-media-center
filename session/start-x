@@ -3,8 +3,10 @@
 # `bash start-x`. Not startx: it's labelled initrc_exec_t, so SELinux would run
 # the whole session as initrc_t, which can't create user namespaces (Steam,
 # Flatpak). xinit is bin_t and keeps the login's unconfined_t.
+# setpriv: pam_systemd gives local sessions ambient CAP_WAKE_ALARM, and bwrap
+# (Flatpak, Steam) refuses to run with capabilities it didn't get via setuid.
 set -euo pipefail
 export XAUTHORITY=$HOME/.Xauthority
 touch "$XAUTHORITY"
 xauth -q -f "$XAUTHORITY" add :0 . "$(mcookie)"
-exec xinit "$(dirname "$0")/tmc-session" -- /usr/bin/X :0 vt1 -keeptty -nolisten tcp -auth "$XAUTHORITY"
+exec setpriv --inh-caps=-all --ambient-caps=-all xinit "$(dirname "$0")/tmc-session" -- /usr/bin/X :0 vt1 -keeptty -nolisten tcp -auth "$XAUTHORITY"
