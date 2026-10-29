@@ -186,6 +186,20 @@ pub struct Node {
     pub meta: Meta,
 }
 
+const VIDEO_EXTS: &[&str] =
+    &["mkv", "mp4", "m4v", "avi", "mov", "wmv", "webm", "mpg", "mpeg", "ts", "m2ts", "mts", "flv", "ogv", "3gp", "vob"];
+const AUDIO_EXTS: &[&str] =
+    &["mp3", "flac", "ogg", "oga", "opus", "m4a", "aac", "wav", "wma", "alac", "aiff", "ape", "mka"];
+
+fn has_ext(name: &str, exts: &[&str]) -> bool {
+    let ext = std::path::Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("");
+    exts.iter().any(|e| e.eq_ignore_ascii_case(ext))
+}
+
+pub fn is_audio(name: &str) -> bool {
+    has_ext(name, AUDIO_EXTS)
+}
+
 pub fn strip_extension(filename: &str) -> &str {
     match filename.rfind('.') {
         Some(i) if i > 0 && i + 1 < filename.len() => &filename[..i],
@@ -279,10 +293,11 @@ pub fn spawn_scan(media_path: String, subtitles: crate::config::Subtitles, tx: S
             if !entry.file_type().is_file() {
                 continue;
             }
+            let name = entry.file_name().to_string_lossy();
             let kind = match entry.path().extension().and_then(|e| e.to_str()) {
-                Some("mp4" | "mkv" | "avi" | "mp3") => Kind::Video,
                 Some("rvz" | "wbfs") => Kind::WiiGame,
                 Some("sh") => Kind::Script,
+                _ if is_audio(&name) || has_ext(&name, VIDEO_EXTS) => Kind::Video,
                 _ => continue,
             };
             let Ok(rel) = entry.path().strip_prefix(&media_path) else { continue };
@@ -316,8 +331,8 @@ pub fn spawn_scan(media_path: String, subtitles: crate::config::Subtitles, tx: S
                 let has_english = tracks.iter().any(|(key, label)| {
                     key.starts_with("track_sub_") && is_english(label) && track_rank(label, false).is_some_and(|r| r < 3)
                 });
-                // .mp3 files are in the video list too, but have nothing to subtitle.
-                subs_done = has_english || rel.ends_with(".mp3");
+                // Audio files are in the video list too, but have nothing to subtitle.
+                subs_done = has_english || is_audio(&rel);
                 if !subs_done {
                     match fetcher.fetch(std::path::Path::new(&full)) {
                         Ok(downloaded) => {
@@ -348,6 +363,13 @@ mod tests {
 
     fn path(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn extension_classification() {
+        assert!(is_audio("a.flac") && is_audio("A.MP3") && is_audio("x.y.opus"));
+        assert!(!is_audio("a.mkv") && !is_audio("mp3") && !is_audio("a.flac.tmc"));
+        assert!(has_ext("a.MKV", VIDEO_EXTS) && has_ext("a.ts", VIDEO_EXTS) && !has_ext("a.txt", VIDEO_EXTS));
     }
 
     #[test]

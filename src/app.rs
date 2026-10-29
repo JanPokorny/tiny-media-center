@@ -163,7 +163,7 @@ impl App {
     // video frames to render, so playback shows a now-playing screen instead.
     pub fn audio_name(&self) -> Option<&str> {
         self.stack.iter().find_map(|frame| match frame {
-            Frame::Video { name, .. } if name.ends_with(".mp3") => {
+            Frame::Video { name, .. } if media::is_audio(name) => {
                 Some(media::strip_extension(name))
             }
             _ => None,
