@@ -586,13 +586,7 @@ impl App {
                 }
                 Ok(ScanMsg::WalkDone) => {
                     let mut tree = std::mem::take(&mut self.walking);
-                    // The open video's in-memory metadata can be newer than what
-                    // the walk read from its sidecar (track pick, probe result).
-                    if let Some(path) = self.video_path() {
-                        if let (Some(old), Some(new)) = (media::get_node(&self.tree, &path), media::get_node_mut(&mut tree, &path)) {
-                            new.meta = old.meta.clone();
-                        }
-                    }
+                    media::keep_meta(&self.tree, &mut tree);
                     self.tree = tree;
                     if matches!(self.mode, Mode::Scanning) {
                         self.mode = Mode::Browse;

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Kind {
@@ -228,7 +228,8 @@ pub fn load_metadata(media_path: &str, node_path: &[String]) -> Meta {
 // sidecar (which would silently reset watch progress and re-trigger probing).
 pub fn save_metadata(media_path: &str, node_path: &[String], meta: &Meta) {
     let path = tmc_path(media_path, node_path);
-    let tmp = format!("{path}.tmp");
+    // Unique per thread: the scan and the UI can save the same sidecar at once.
+    let tmp = format!("{path}.{:?}.tmp", std::thread::current().id());
     let result = toml::to_string(meta)
         .map_err(std::io::Error::other)
         .and_then(|s| std::fs::write(&tmp, s).and_then(|()| std::fs::rename(&tmp, &path)));
@@ -278,10 +279,24 @@ pub fn insert(root: &mut Node, parts: Vec<String>, kind: Kind, meta: Meta) {
     cur.children.insert(parts.last().unwrap().clone(), leaf);
 }
 
+// A fresh walk's tree takes over the in-memory metadata of every node the old
+// tree also has: it is authoritative (the scan mirrors its writes via Probed),
+// while the sidecars a walk read may already be outdated.
+pub fn keep_meta(old: &Node, new: &mut Node) {
+    for (name, node) in &mut new.children {
+        if let Some(prev) = old.children.get(name).filter(|p| p.kind == node.kind) {
+            node.meta = prev.meta.clone();
+            keep_meta(prev, node);
+        }
+    }
+}
+
 // Quiet time after the last relevant filesystem event before rescanning, and
 // the age a file must reach before it is probed: a copy still in progress
 // would otherwise be probed half-written and written off for good.
 const DEBOUNCE: Duration = Duration::from_secs(5);
+// Continuous events (a long copy) must not postpone the rescan forever.
+const MAX_DEBOUNCE: Duration = Duration::from_secs(30);
 const SETTLE: Duration = Duration::from_secs(10);
 
 fn listed_kind(name: &str) -> Option<Kind> {
@@ -338,9 +353,18 @@ fn walk(media_path: &str, startup: bool, tx: &Sender<ScanMsg>) -> (Vec<Vec<Strin
         let mut meta = Meta::default();
         if kind == Kind::Video {
             meta = load_metadata(media_path, &parts);
-            if !meta.probe_failed && (meta.duration.is_none() || (startup && !meta.subs_done)) {
+            let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
+            // The file changed after its sidecar was written (e.g. a stalled copy
+            // probed half-written): whatever the probe recorded is void. A future
+            // mtime (clock skew) doesn't count, or it would re-probe forever.
+            let sidecar = std::fs::metadata(tmc_path(media_path, &parts)).and_then(|m| m.modified()).ok();
+            let changed = matches!((modified, sidecar), (Some(m), Some(s)) if m > s && m.elapsed().is_ok());
+            if changed {
+                meta.probe_failed = false;
+            }
+            if !meta.probe_failed && (changed || meta.duration.is_none() || (startup && !meta.subs_done)) {
                 // A modification time in the future (clock skew, preserved mtimes) counts as settled.
-                let age = entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok());
+                let age = modified.and_then(|t| t.elapsed().ok());
                 match age {
                     Some(age) if age < SETTLE => {
                         let wait = SETTLE - age + Duration::from_secs(1); // slack batches files copied together
@@ -373,7 +397,7 @@ pub fn spawn_scan(media_path: String, subtitles: crate::config::Subtitles, tx: S
             let root = root.clone();
             // An error (e.g. queue overflow) may hide changes: rescan.
             move |event: notify::Result<notify::Event>| {
-                if event.map_or(true, |e| affects_listing(&root, &e)) {
+                if event.map_or(true, |e| e.need_rescan() || affects_listing(&root, &e)) {
                     let _ = wtx.send(());
                 }
             }
@@ -440,7 +464,8 @@ pub fn spawn_scan(media_path: String, subtitles: crate::config::Subtitles, tx: S
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
-            while wrx.recv_timeout(DEBOUNCE).is_ok() {}
+            let started = Instant::now();
+            while started.elapsed() < MAX_DEBOUNCE && wrx.recv_timeout(DEBOUNCE).is_ok() {}
         }
     });
 }
@@ -486,6 +511,18 @@ mod tests {
         assert!(!affects(rename, "/m/.movie.mkv.x1y2"));
         assert!(!affects(Access(AccessKind::Open(AccessMode::Read)), "/m/movie.mkv"));
         assert!(!affects(Create(CreateKind::Folder), "/other/dir"));
+    }
+
+    #[test]
+    fn keep_meta_prefers_old_in_memory_state() {
+        let mut old = Node::default();
+        insert(&mut old, path(&["d", "a.mkv"]), Kind::Video, Meta { position: Some(5.0), ..Meta::default() });
+        let mut new = Node::default();
+        insert(&mut new, path(&["d", "a.mkv"]), Kind::Video, Meta { position: Some(1.0), ..Meta::default() });
+        insert(&mut new, path(&["d", "b.mkv"]), Kind::Video, Meta { position: Some(2.0), ..Meta::default() });
+        keep_meta(&old, &mut new);
+        assert_eq!(get_node(&new, &path(&["d", "a.mkv"])).unwrap().meta.position, Some(5.0));
+        assert_eq!(get_node(&new, &path(&["d", "b.mkv"])).unwrap().meta.position, Some(2.0)); // new file
     }
 
     #[test]
