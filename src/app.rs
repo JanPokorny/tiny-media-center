@@ -8,7 +8,7 @@ use crate::input::Input;
 use crate::media::{self, Kind, Node, ScanMsg, TrackKind};
 use crate::menu::{Menu, MenuItem};
 use crate::player::Player;
-use crate::windows::{self, Win, Window};
+use crate::windows::{self, Msg, Win, Window};
 use std::process::Command;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
@@ -105,11 +105,11 @@ pub struct App {
     root_selection: Option<String>,
     // Other apps' windows, as last reported by the window manager thread.
     windows: Vec<Win>,
-    windows_rx: Receiver<Vec<Win>>,
+    windows_rx: Receiver<Msg>,
 }
 
 impl App {
-    pub fn new(player: Player, scan_rx: Receiver<ScanMsg>, windows_rx: Receiver<Vec<Win>>) -> App {
+    pub fn new(player: Player, scan_rx: Receiver<ScanMsg>, windows_rx: Receiver<Msg>) -> App {
         App {
             tree: Node::default(),
             walking: Node::default(),
@@ -399,8 +399,9 @@ impl App {
                 self.stack.push(Frame::Running { menu });
             }
             Action::Window(id) => {
-                let items = vec![MenuItem::new("Focus".into(), Action::Focus(id)), MenuItem::new("Close".into(), Action::Close(id))];
-                self.stack.push(Frame::Window { id, menu: Menu::new(items, 0) });
+                if let Some((_, window)) = Self::window_frames(&self.windows, id) {
+                    self.stack.push(window);
+                }
             }
             Action::Focus(id) => windows::activate(id),
             Action::Close(id) => {
@@ -632,7 +633,40 @@ impl App {
     // Take the latest window list from the window manager; leave window frames
     // whose window (or whole list) went away, and keep the selection.
     pub fn pump_windows(&mut self) {
-        let Some(windows) = self.windows_rx.try_iter().last() else { return };
+        let (mut list, mut front) = (None, None);
+        for msg in self.windows_rx.try_iter() {
+            match msg {
+                Msg::List(windows) => list = Some(windows),
+                Msg::Front(id) => front = Some(id),
+            }
+        }
+        if let Some(windows) = list {
+            self.update_windows(windows);
+        }
+        // Not over a video, whose menu and stack stay as they are.
+        if let (Some(id), Mode::Browse) = (front, &self.mode) {
+            if let Some((running, window)) = Self::window_frames(&self.windows, id) {
+                self.stack.truncate(1);
+                if let Some(Frame::Home { menu }) = self.stack.first_mut() {
+                    menu.selected = menu.items.iter().position(|i| i.action == Action::Running).unwrap_or(menu.selected);
+                }
+                self.stack.extend([running, window]);
+                self.menu().reset_scroll();
+            }
+        }
+    }
+
+    // Running with the window selected, and its Focus / Close frame.
+    fn window_frames(windows: &[Win], id: Window) -> Option<(Frame, Frame)> {
+        let selected = windows.iter().position(|w| w.id == id)?;
+        let items = vec![MenuItem::new("Focus".into(), Action::Focus(id)), MenuItem::new("Close".into(), Action::Close(id))];
+        Some((
+            Frame::Running { menu: Menu::new(Self::running_items(windows), selected) },
+            Frame::Window { id, menu: Menu::new(items, 0) },
+        ))
+    }
+
+    fn update_windows(&mut self, windows: Vec<Win>) {
         let was_empty = self.windows.is_empty();
         self.windows = windows;
         let windows = &self.windows;
@@ -748,6 +782,16 @@ mod tests {
             children: BTreeMap::new(),
             meta: Meta { duration, position, ..Meta::default() },
         }
+    }
+
+    #[test]
+    fn builds_the_window_frames() {
+        let win = |id, title: &str| Win { id, title: title.into() };
+        let windows = [win(1, "One"), win(2, "Two")];
+        let (running, window) = App::window_frames(&windows, 2).unwrap();
+        assert!(matches!(&running, Frame::Running { menu } if menu.selected == 1 && menu.items.len() == 2));
+        assert!(matches!(&window, Frame::Window { id: 2, menu } if menu.selected == 0 && menu.items[0].action == Action::Focus(2)));
+        assert!(App::window_frames(&windows, 3).is_none());
     }
 
     #[test]

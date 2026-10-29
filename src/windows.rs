@@ -62,6 +62,12 @@ pub struct Win {
     pub title: String,
 }
 
+// To the app: the other windows, or the one that was in front when tmc was raised.
+pub enum Msg {
+    List(Vec<Win>),
+    Front(Window),
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
     Normal,
@@ -160,7 +166,7 @@ struct Wm {
     clients: Vec<Client>,
     // Bottom first.
     stack: Vec<Window>,
-    tx: Sender<Vec<Win>>,
+    tx: Sender<Msg>,
     // Grabbed keycodes and their KEYS command.
     keys: Vec<(u8, &'static str)>,
 }
@@ -246,6 +252,7 @@ impl Wm {
                     let _ = self.place(client);
                 }
             }
+            Event::ClientMessage(e) if e.type_ == a._NET_ACTIVE_WINDOW && e.window == OWN.load(Relaxed) => self.raise_own()?,
             Event::ClientMessage(e) if e.type_ == a._NET_ACTIVE_WINDOW => self.activate(e.window)?,
             // Normal windows stay fullscreen whatever is asked.
             Event::ClientMessage(e) if e.type_ == a._NET_WM_STATE => {
@@ -260,7 +267,7 @@ impl Wm {
                 }
             }
             Event::KeyPress(e) => match self.keys.iter().find(|k| k.0 == e.detail) {
-                Some((_, "")) => self.activate(OWN.load(Relaxed))?,
+                Some((_, "")) => self.raise_own()?,
                 Some(&(_, command)) => {
                     // Waited for on its own thread, so the WM never blocks and no zombie is left.
                     std::thread::spawn(move || overlay::volume_command(command));
@@ -345,6 +352,15 @@ impl Wm {
         self.sync()
     }
 
+    // Tells the app which window was in front, unless tmc already was.
+    fn raise_own(&mut self) -> Result<(), ReplyOrIdError> {
+        let own = OWN.load(Relaxed);
+        if let Some(&top) = self.stack.last().filter(|&&t| t != own) {
+            let _ = self.tx.send(Msg::Front(top));
+        }
+        self.activate(own)
+    }
+
     // Applies the stack and focuses its top.
     fn sync(&self) -> Result<(), ReplyOrIdError> {
         let (x, a) = (self.x, self.x.atoms);
@@ -370,13 +386,13 @@ impl Wm {
     fn send_list(&self) {
         let own = OWN.load(Relaxed);
         let others = self.clients.iter().filter(|c| c.id != own && !c.title.is_empty());
-        let _ = self.tx.send(others.map(|c| Win { id: c.id, title: c.title.clone() }).collect());
+        let _ = self.tx.send(Msg::List(others.map(|c| Win { id: c.id, title: c.title.clone() }).collect()));
     }
 }
 
 // Becomes the window manager, or exits if there is another one. The list of
 // other windows arrives on the returned channel whenever it may have changed.
-pub fn start() -> Receiver<Vec<Win>> {
+pub fn start() -> Receiver<Msg> {
     let connect = || {
         let (conn, screen) = RustConnection::connect(None).ok()?;
         let root = conn.setup().roots[screen].root;
