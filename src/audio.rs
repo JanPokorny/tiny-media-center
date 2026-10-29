@@ -109,7 +109,17 @@ pub fn connect(device: &BtDevice, pair: bool) -> Option<String> {
     let trust: &[&str] = &["5", "bluetoothctl", "trust", mac];
     let pair_step: &[&str] = &["30", "bluetoothctl", "pair", mac];
     let connect: &[&str] = &["20", "bluetoothctl", "connect", mac];
-    let steps = if pair { vec![trust, pair_step, connect] } else { vec![trust, connect] };
+    // The device may have reconnected on its own since the menu was built;
+    // connecting again then races its AVRCP setup, which can wedge e.g. the
+    // JBL's volume control until it's power-cycled.
+    let connected = stdout("timeout", &["5", "bluetoothctl", "info", mac]).contains("Connected: yes");
+    let mut steps = vec![trust];
+    if pair {
+        steps.push(pair_step);
+    }
+    if !connected {
+        steps.push(connect);
+    }
     if let Err(e) = steps.iter().try_for_each(|args| btctl(args)) {
         return Some(format!("{}: {e}", device.name));
     }
