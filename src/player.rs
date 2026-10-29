@@ -5,6 +5,7 @@ use libmpv2::events::Event;
 use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use libmpv2::{mpv_node::MpvNode, Mpv};
 use sdl3::VideoSubsystem;
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 
@@ -31,6 +32,8 @@ pub struct Player {
     render: RenderContext, // declared before mpv: must be freed first
     mpv: Mpv,
     pub time_pos: f64,
+    // restart()'s seek is async: eof-reached stays true until it lands.
+    restarting: Cell<bool>,
 }
 
 impl Player {
@@ -64,7 +67,7 @@ impl Player {
                 }),
             ],
         )?;
-        Ok(Player { render, mpv, time_pos: 0.0 })
+        Ok(Player { render, mpv, time_pos: 0.0, restarting: Cell::new(false) })
     }
 
     // Loads the file paused: opening media lands in the paused menu state.
@@ -84,6 +87,7 @@ impl Player {
         };
         let _ = self.mpv.set_property("sid", sid);
         let _ = self.mpv.set_property("pause", true);
+        self.restarting.set(false);
         self.time_pos = start.unwrap_or(0.0);
         let _ = command(&self.mpv, "loadfile", &[file, "replace"]);
     }
@@ -98,7 +102,11 @@ impl Player {
 
     // True when keep-open paused playback on the last frame.
     pub fn at_eof(&self) -> bool {
-        self.mpv.get_property("eof-reached").unwrap_or(false)
+        let eof = self.mpv.get_property("eof-reached").unwrap_or(false);
+        if !eof {
+            self.restarting.set(false);
+        }
+        eof && !self.restarting.get()
     }
 
     pub fn duration(&self) -> f64 {
@@ -116,6 +124,7 @@ impl Player {
     }
 
     pub fn restart(&self) {
+        self.restarting.set(true);
         let _ = command(&self.mpv, "seek", &["0", "absolute"]);
     }
 
