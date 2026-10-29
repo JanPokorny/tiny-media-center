@@ -18,7 +18,7 @@ use app::{App, Mode};
 use background::Background;
 use config::{color, ACCENT_COLOR, BACKGROUND_COLOR, DIM_COLOR, FONT_SIZE, MEDIA_PATH, TEXT_COLOR};
 use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, Paint, Path, Renderer};
-use menu::text_width;
+use menu::{draw_text, text_width};
 use player::Player;
 use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::{Keycode, Mod};
@@ -39,9 +39,9 @@ fn fmt_time(secs: f64) -> String {
 }
 
 // Draw text horizontally centered, with its top edge at y.
-fn draw_centered<R: Renderer>(canvas: &mut Canvas<R>, text: &str, y: f32, wf: f32, paint: &Paint) {
+fn draw_centered<R: Renderer>(canvas: &mut Canvas<R>, text: &str, y: f32, wf: f32, paint: &Paint, alpha: f32) {
     let text_w = text_width(canvas, text, paint);
-    let _ = canvas.fill_text((wf - text_w) / 2.0, y, text, paint);
+    draw_text(canvas, (wf - text_w) / 2.0, y, text, paint, alpha);
 }
 
 // Bottom progress bar with a centered line of text above it: the seek
@@ -71,7 +71,7 @@ fn draw_progress<R: Renderer>(
             .with_font(&[font])
             .with_font_size(FONT_SIZE)
             .with_text_baseline(Baseline::Top);
-        draw_centered(canvas, text, hf - bar_height - FONT_SIZE * 1.2, wf, &paint);
+        draw_centered(canvas, text, hf - bar_height - FONT_SIZE * 1.2, wf, &paint, alpha);
     }
 }
 
@@ -233,10 +233,10 @@ fn main() {
                         .with_font(&[font])
                         .with_font_size(FONT_SIZE)
                         .with_text_baseline(Baseline::Top);
-                    let _ = canvas.fill_text(0.0, 0.0, "now playing", &paint);
-                    draw_centered(&mut canvas, album, (hf - FONT_SIZE) / 2.0 - FONT_SIZE * 1.2, wf, &paint);
+                    draw_text(&mut canvas, 0.0, 0.0, "now playing", &paint, 1.0);
+                    draw_centered(&mut canvas, album, (hf - FONT_SIZE) / 2.0 - FONT_SIZE * 1.2, wf, &paint, 1.0);
                     let paint = paint.with_color(color(TEXT_COLOR, 1.0));
-                    draw_centered(&mut canvas, track, (hf - FONT_SIZE) / 2.0, wf, &paint);
+                    draw_centered(&mut canvas, track, (hf - FONT_SIZE) / 2.0, wf, &paint, 1.0);
                 }
                 // Seek overlay: progress bar + current time, fading out over
                 // the last moments before osd_until (always up for audio).
@@ -284,11 +284,11 @@ fn main() {
         };
         if let Some(text) = loading_text {
             let paint = dim_paint.clone().with_color(color(TEXT_COLOR, 1.0));
-            draw_centered(&mut canvas, text, (hf - FONT_SIZE) / 2.0 - FONT_SIZE * 0.7, wf, &paint);
+            draw_centered(&mut canvas, text, (hf - FONT_SIZE) / 2.0 - FONT_SIZE * 0.7, wf, &paint, 1.0);
             let subtext = &app.scan_status;
             if !subtext.is_empty() {
                 let paint = dim_paint.clone().with_font_size(FONT_SIZE * 0.5);
-                draw_centered(&mut canvas, subtext, (hf - FONT_SIZE) / 2.0 + FONT_SIZE * 0.7, wf, &paint);
+                draw_centered(&mut canvas, subtext, (hf - FONT_SIZE) / 2.0 + FONT_SIZE * 0.7, wf, &paint, 1.0);
             }
         } else {
             // Browse/paused: starfield + menu + title + watch progress bar +
@@ -303,7 +303,7 @@ fn main() {
             }
             app.stack.last_mut().unwrap().menu_mut().draw(&mut canvas, font, dt, wf, hf);
 
-            let _ = canvas.fill_text(0.0, 0.0, app.title(), &dim_paint);
+            draw_text(&mut canvas, 0.0, 0.0, app.title(), &dim_paint, 1.0);
 
             if let Some((name, since, _)) = &app.launching {
                 let mut shade = Path::new();
@@ -311,7 +311,7 @@ fn main() {
                 canvas.fill_path(&shade, &Paint::color(color(BACKGROUND_COLOR, 0.6)));
                 let pulse = 0.65 + 0.35 * (since.elapsed().as_secs_f32() * 4.0).sin();
                 let paint = dim_paint.clone().with_color(color(TEXT_COLOR, pulse));
-                draw_centered(&mut canvas, &format!("Starting {name}..."), (hf - FONT_SIZE) / 2.0, wf, &paint);
+                draw_centered(&mut canvas, &format!("Starting {name}..."), (hf - FONT_SIZE) / 2.0, wf, &paint, pulse);
             }
 
             if let Some(video) = app.video_node() {
@@ -348,7 +348,7 @@ fn main() {
                     .with_color(color(rgb, 1.0))
                     .with_font_size(FONT_SIZE * 0.4);
                 let text_w = text_width(&canvas, &text, &paint);
-                let _ = canvas.fill_text(wf - text_w - 10.0, 10.0, &text, &paint);
+                draw_text(&mut canvas, wf - text_w - 10.0, 10.0, &text, &paint, 1.0);
             }
         }
 

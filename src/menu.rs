@@ -8,6 +8,13 @@ pub fn text_width<R: Renderer>(canvas: &Canvas<R>, text: &str, paint: &Paint) ->
     canvas.measure_text(0.0, 0.0, text, paint).map_or(0.0, |m| m.width())
 }
 
+// Text with a dark drop shadow (alpha: the paint's), readable over bright video.
+pub fn draw_text<R: Renderer>(canvas: &mut Canvas<R>, x: f32, y: f32, text: &str, paint: &Paint, alpha: f32) {
+    let shadow = paint.clone().with_color(Color::rgbaf(0.0, 0.0, 0.0, 0.6 * alpha));
+    let _ = canvas.fill_text(x + 3.0, y + 3.0, text, &shadow);
+    let _ = canvas.fill_text(x, y, text, paint);
+}
+
 #[derive(Clone)]
 pub struct MenuItem<A> {
     pub label: String,
@@ -170,7 +177,7 @@ impl<A> Menu<A> {
 
             let x = 50.0;
             let prefix = if focused { "> " } else { "  " };
-            let _ = canvas.fill_text(x, item_y, prefix, &paint);
+            draw_text(canvas, x, item_y, prefix, &paint, alpha);
 
             // Squish the focused label horizontally when it overflows.
             let text_x = x + text_width(canvas, prefix, &paint);
@@ -182,7 +189,7 @@ impl<A> Menu<A> {
             canvas.save();
             canvas.translate(text_x, item_y);
             canvas.scale(item.squish, 1.0);
-            let _ = canvas.fill_text(0.0, 0.0, &item.label, &paint);
+            draw_text(canvas, 0.0, 0.0, &item.label, &paint, alpha);
             canvas.restore();
         }
     }
