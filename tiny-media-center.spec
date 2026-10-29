@@ -22,8 +22,6 @@ Source1:        %{name}-%{version}-vendor.tar.xz
 BuildRequires:  cargo-rpm-macros >= 25
 BuildRequires:  gcc
 BuildRequires:  pkgconfig(mpv)
-# Fedora packages SDL3, so link it dynamically instead of the vendored
-# static build used for the portable GitHub Releases binary.
 BuildRequires:  pkgconfig(sdl3)
 BuildRequires:  pkgconfig(x11)
 
@@ -40,7 +38,7 @@ Dolphin, run shell scripts. Written in Rust on SDL3 + femtovg + libmpv.
 %cargo_prep -v vendor
 
 %build
-%cargo_build -n
+%cargo_build
 %cargo_vendor_manifest
 
 %install

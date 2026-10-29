@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # One-shot dev setup for Fedora 44+: run as `./setup.sh` from the repo root
 # (sudo is used internally for dnf). Installs the distro build and runtime
-# dependencies (libmpv and SDL3's Linux build deps, since SDL3 is compiled
-# from source by default), then installs mise and the pinned toolchain
-# (`mise install`).
+# dependencies (libmpv and SDL3 headers), then installs mise and the pinned
+# toolchain (`mise install`).
 set -euo pipefail
 
 command -v dnf >/dev/null || { echo "dnf not found; this script assumes Fedora" >&2; exit 1; }
@@ -13,23 +12,11 @@ sudo=sudo
 [ "$(id -u)" -eq 0 ] && sudo=
 
 echo "== installing distro build dependencies (sudo dnf)"
-# libmpv headers (by pkg-config capability, so the package name can't drift),
-# cmake + the SDL3 feature deps from SDL's docs/README-linux.md Fedora list
-# (SDL dlopens backends at runtime, so dev headers missing at build time mean
-# the backend is silently absent from the binary forever), and gcc/curl for
-# rustup/mise.
+# libmpv and SDL3 headers (by pkg-config capability, so the package names
+# can't drift) and gcc/curl for rustup/mise.
 $sudo dnf install -y \
-    gcc git-core make cmake pkgconf-pkg-config curl \
-    'pkgconfig(mpv)' \
-    alsa-lib-devel pulseaudio-libs-devel pipewire-devel \
-    pipewire-jack-audio-connection-kit-devel \
-    libX11-devel libXext-devel libXrandr-devel libXcursor-devel \
-    libXfixes-devel libXi-devel libXScrnSaver-devel \
-    dbus-devel ibus-devel systemd-devel \
-    mesa-libGL-devel mesa-libGLES-devel mesa-libEGL-devel vulkan-devel \
-    libxkbcommon-devel wayland-devel wayland-protocols-devel \
-    libdrm-devel mesa-libgbm-devel libdecor-devel \
-    libusb1-devel liburing-devel
+    gcc git-core make pkgconf-pkg-config curl \
+    'pkgconfig(mpv)' 'pkgconfig(sdl3)'
 
 echo "== installing runtime dependencies (sudo dnf)"
 # mpv-libs (libmpv.so.2, the embedded player) already comes with the mpv

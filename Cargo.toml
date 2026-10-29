@@ -19,9 +19,8 @@ zbus = "6.1.0"
 zruntime = "0.2"
 
 [features]
-# SDL3 is statically linked from source by default, since most distros don't
-# package it yet; build with --no-default-features to link a system SDL3.
-default = ["vendored-sdl"]
+# System SDL3 by default; the portable release binary links it statically.
+default = []
 vendored-sdl = ["sdl3/build-from-source-static"]
 
 [profile.release]

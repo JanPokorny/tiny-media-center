@@ -1,7 +1,6 @@
 # Dev tools and tasks (https://mise.jdx.dev): `mise install`, then e.g.
 # `mise run release`. Native build dependencies still come from the distro:
-# libmpv headers and, for the default from-source SDL3, cmake plus its
-# Linux build dependencies (see README).
+# libmpv and SDL3 headers (see README).
 
 [tools]
 rust = { version = "1.94", components = "clippy" }
@@ -78,7 +77,7 @@ mkdir -p dist
         [ -x "$HOME/.cargo/bin/cargo" ] ||
             curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
         export PATH="$HOME/.cargo/bin:$PATH"
-        cargo build --release --target-dir /tmp/target
+        cargo build --release --features vendored-sdl --target-dir /tmp/target
         install /tmp/target/release/tiny-media-center dist/
     '
 

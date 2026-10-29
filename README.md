@@ -56,11 +56,12 @@ it is created with defaults on first run and your edits to it are kept.
 
 ## build from source
 
-`cargo build --release` — needs libmpv headers (`apt install libmpv-dev`,
-on Arch plain `mpv` suffices) and SDL's
-[Linux build dependencies](https://wiki.libsdl.org/SDL3/README-linux)
-(SDL3 is compiled from source and statically linked by default; build with
-`--no-default-features` to link a system SDL3 instead).
+`cargo build --release` — needs libmpv and SDL3 headers (Fedora:
+`dnf install mpv-devel SDL3-devel`; `./setup.sh` installs everything). It
+links the system SDL3; `--features vendored-sdl` compiles SDL3 from source
+and links it statically instead (needs cmake and SDL's
+[Linux build dependencies](https://wiki.libsdl.org/SDL3/README-linux); this
+is how the portable release binary is built).
 
 With [mise](https://mise.jdx.dev), `mise install` provides the pinned Rust
 toolchain and `mise tasks` lists the available tasks (`build-portable` and `release`).
@@ -75,8 +76,7 @@ attaches it to a GitHub Release, and triggers a rebuild of the
 [Copr repository](https://copr.fedorainfracloud.org/coprs/janpokorny/tiny-media-center/)
 from [tiny-media-center.spec](tiny-media-center.spec) (via
 [.copr/Makefile](.copr/Makefile), which vendors the Rust dependencies at
-SRPM time), linking Fedora's system SDL3 instead of the vendored static
-one.
+SRPM time).
 
 ## credits
 
