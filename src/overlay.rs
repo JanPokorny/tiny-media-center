@@ -1,16 +1,19 @@
 // The volume pop-up and desktop notifications, shown in a small window that
 // stays above every app. It is an SDL tooltip popup: an override-redirect X
 // window (so the window manager leaves it alone and it never takes focus)
-// without input; windows.rs raises it after every restack.
+// without input; windows.rs raises it after every restack. Known ceiling: an
+// override-redirect window mapped later can cover it until the next restack.
 
 use crate::config::{color, Style};
 use crate::menu::text_width;
 use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, Paint, Path, Renderer};
 use sdl3::video::{GLContext, Window, WindowPos};
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-use zbus::connection::{Builder, Connection};
+use zbus::connection::Builder;
+use zbus::fdo::RequestNameFlags;
 
 const MAX_NOTES: usize = 3;
 const VOLUME_TIME: Duration = Duration::from_millis(1500);
@@ -41,7 +44,6 @@ struct State {
 
 // Written by the bus thread and the key handler, read by the main loop.
 static STATE: Mutex<State> = Mutex::new(State { next_id: 1, notes: Vec::new(), volume: None, closed: Vec::new() });
-static CONN: OnceLock<Connection> = OnceLock::new();
 
 fn state() -> MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
@@ -124,6 +126,11 @@ impl State {
     }
 }
 
+// The body's non-empty lines, as many as fit the card.
+fn body_lines(body: &str) -> impl Iterator<Item = &str> {
+    body.lines().filter(|l| !l.trim().is_empty()).take(BODY_LINES)
+}
+
 #[derive(Debug, PartialEq)]
 enum Card {
     Volume { level: f32, muted: bool },
@@ -136,13 +143,14 @@ const SUMMARY: f32 = 1.3;
 const APP: f32 = 0.9;
 const BODY: f32 = 1.1;
 const BAR: f32 = 0.5;
+const BODY_LINES: usize = 3;
 
 impl Card {
     fn height(&self) -> f32 {
         let content = match self {
             Card::Volume { .. } => SUMMARY + BAR + 0.2,
             Card::Note { app, body, .. } => {
-                SUMMARY + if app.is_empty() { 0.0 } else { APP } + if body.is_empty() { 0.0 } else { BODY }
+                SUMMARY + if app.is_empty() { 0.0 } else { APP } + BODY * body_lines(body).count() as f32
             }
         };
         content + 2.0 * PAD
@@ -153,8 +161,11 @@ pub fn show_volume((level, muted): (f32, bool)) {
     state().volume = Some((level, muted, Instant::now() + VOLUME_TIME));
 }
 
-// Runs a wpctl command, then pops up the resulting volume.
+// Runs a wpctl command, then pops up the resulting volume. One at a time, so
+// that key autorepeat can't show an older level last.
 pub fn volume_command(command: &str) {
+    static BUSY: Mutex<()> = Mutex::new(());
+    let _busy = BUSY.lock().unwrap_or_else(|e| e.into_inner());
     let _ = std::process::Command::new("sh").arg("-c").arg(command).status();
     let get = std::process::Command::new("wpctl").args(["get-volume", "@DEFAULT_AUDIO_SINK@"]).output();
     if let Some(volume) = get.ok().and_then(|o| parse_volume(&String::from_utf8_lossy(&o.stdout))) {
@@ -187,7 +198,7 @@ impl Server {
     }
 
     fn get_capabilities(&self) -> Vec<&str> {
-        vec!["body"]
+        vec!["body", "body-markup"]
     }
 
     fn get_server_information(&self) -> (&str, &str, &str, &str) {
@@ -195,36 +206,56 @@ impl Server {
     }
 }
 
-// zbus drives the connection from the thread that calls block_on.
-fn serve() {
-    std::thread::spawn(|| {
+// zbus drives the connection from the thread that calls block_on, which also
+// announces closed notifications. The name is asked for again every few
+// seconds, replacing a daemon that D-Bus activation started first, or taking
+// it back after it was lost.
+fn serve(closed: Receiver<(u32, u32)>) {
+    std::thread::spawn(move || {
         zbus::block_on(async {
-            let conn = Builder::session().name(NAME).serve_at(PATH, Server).build().await;
-            match conn {
-                Ok(conn) => {
-                    let _ = CONN.set(conn);
-                    std::future::pending::<()>().await
+            let conn = match Builder::session().serve_at(PATH, Server).build().await {
+                Ok(conn) => conn,
+                Err(e) => return eprintln!("notification server: {e}"),
+            };
+            let runtime = zruntime::SharedRuntime::current().expect("runtime");
+            loop {
+                let flags = RequestNameFlags::REPLACE_EXISTING | RequestNameFlags::DO_NOT_QUEUE;
+                let _ = conn.request_name_with_flags(NAME, flags).await;
+                for _ in 0..30 {
+                    for signal in closed.try_iter() {
+                        let _ = conn.emit_signal(None::<&str>, PATH, NAME, "NotificationClosed", &signal).await;
+                    }
+                    runtime.sleep(Duration::from_millis(100)).await;
                 }
-                // Another notification daemon owns the name.
-                Err(e) => eprintln!("notification server: {e}"),
             }
         })
     });
 }
 
+// Fields drop in order: the canvas deletes its GL objects while the
+// overlay's context, made current in drop, and window still exist.
 pub struct Overlay {
-    window: Window,
-    gl: GLContext,
     canvas: Canvas<OpenGl>,
+    gl: GLContext,
+    window: Window,
     font: FontId,
+    closed: Sender<(u32, u32)>,
+    // What the window shows now.
+    cards: Vec<Card>,
     shown: bool,
-    size: (u32, u32),
+}
+
+impl Drop for Overlay {
+    fn drop(&mut self) {
+        let _ = self.window.gl_make_current(&self.gl);
+    }
 }
 
 impl Overlay {
     // Leaves `main`'s GL context current. The popup is a child of `main` for SDL only.
     pub fn new(video: &sdl3::VideoSubsystem, main: &Window, main_gl: &GLContext, font: &[u8]) -> Overlay {
-        serve();
+        let (closed, rx) = channel();
+        serve(rx);
         let mut builder = unsafe { video.popup_window(main, 100, 100) };
         let window = builder.tooltip().always_on_top().opengl().hidden().build().expect("overlay window");
         let gl = window.gl_create_context().expect("overlay GL context");
@@ -241,44 +272,51 @@ impl Overlay {
             sdl3::sys::properties::SDL_GetNumberProperty(props, sdl3::sys::video::SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0)
         };
         crate::windows::set_overlay(id as u32);
-        Overlay { window, gl, canvas, font, shown: false, size: (0, 0) }
+        Overlay { canvas, gl, window, font, closed, cards: vec![], shown: false }
     }
 
-    // Draws and shows what is due, or hides the window. Call once per frame.
+    // Updates the window with what is due. Call once per frame; it only draws
+    // when the cards changed, as the window keeps its content.
     pub fn frame(&mut self, main: &Window, main_gl: &GLContext, style: &Style) {
         let (cards, closed) = {
             let mut state = state();
             state.expire(Instant::now());
             (state.cards(), std::mem::take(&mut state.closed))
         };
-        if let Some(conn) = CONN.get() {
-            for signal in closed {
-                let _ = zbus::block_on(conn.emit_signal(None::<&str>, PATH, NAME, "NotificationClosed", &signal));
-            }
+        for signal in closed {
+            let _ = self.closed.send(signal);
         }
         if cards.is_empty() {
             if self.shown {
                 self.window.hide();
                 self.shown = false;
             }
+            self.cards = cards;
+            return;
+        }
+        if self.shown && cards == self.cards {
             return;
         }
         let u = style.font_size * 0.4;
         let (w, h) = ((26.0 * u) as u32, (cards.iter().map(Card::height).sum::<f32>() * u).ceil() as u32);
-        if self.size != (w, h) {
-            let (screen_w, _) = main.size();
-            let _ = self.window.set_size(w, h);
-            self.window.set_position(WindowPos::Positioned(screen_w as i32 - w as i32 - u as i32), WindowPos::Positioned(u as i32));
-            self.size = (w, h);
-        }
+        let _ = self.window.set_size(w, h);
+        let x = main.size().0 as i32 - w as i32 - u as i32;
+        self.window.set_position(WindowPos::Positioned(x), WindowPos::Positioned(u as i32));
+        self.paint(main, main_gl, style, &cards, (u, w as f32, h as f32));
         if !self.shown {
+            // Drawn again once mapped, as a window shows nothing before.
             self.window.show();
             crate::windows::raise_overlay();
             self.shown = true;
+            self.paint(main, main_gl, style, &cards, (u, w as f32, h as f32));
         }
+        self.cards = cards;
+    }
+
+    fn paint(&mut self, main: &Window, main_gl: &GLContext, style: &Style, cards: &[Card], (u, w, h): (f32, f32, f32)) {
         let _ = self.window.gl_make_current(&self.gl);
-        self.canvas.set_size(w, h, 1.0);
-        draw(&mut self.canvas, self.font, style, &cards, u, w as f32, h as f32);
+        self.canvas.set_size(w as u32, h as u32, 1.0);
+        draw(&mut self.canvas, self.font, style, cards, u, w, h);
         self.canvas.flush();
         self.window.gl_swap_window();
         let _ = main.gl_make_current(main_gl);
@@ -324,12 +362,12 @@ fn draw<R: Renderer>(canvas: &mut Canvas<R>, font: FontId, style: &Style, cards:
                 rect(canvas, (x, row, max_w * level.clamp(0.0, 1.0), BAR * u), fill, 1.0);
             }
             Card::Note { app, summary, body } => {
-                for (line, size, rgb) in [(app, APP, style.dim_color), (summary, SUMMARY, style.text_color), (body, BODY, style.dim_color)] {
-                    if !line.is_empty() {
-                        let paint = text(size * 0.8, rgb);
-                        let _ = canvas.fill_text(x, row, fit(canvas, line, &paint, max_w), &paint);
-                        row += size * u;
-                    }
+                let app = Some((app.as_str(), APP, style.dim_color)).filter(|_| !app.is_empty());
+                let body = body_lines(body).map(|line| (line, BODY, style.dim_color));
+                for (line, size, rgb) in app.into_iter().chain([(summary.as_str(), SUMMARY, style.text_color)]).chain(body) {
+                    let paint = text(size * 0.8, rgb);
+                    let _ = canvas.fill_text(x, row, fit(canvas, line, &paint, max_w), &paint);
+                    row += size * u;
                 }
             }
         }
@@ -395,6 +433,12 @@ mod tests {
         s.expire(now + Duration::from_secs(6));
         assert!(s.notes.is_empty() && s.volume.is_none());
         assert_eq!(s.closed, [(2, EXPIRED), (4, EXPIRED)]);
+    }
+
+    #[test]
+    fn splits_body_lines() {
+        assert_eq!(body_lines("one\n\n two \nthree\nfour").collect::<Vec<_>>(), ["one", " two ", "three"]);
+        assert_eq!(body_lines("").count(), 0);
     }
 
     #[test]

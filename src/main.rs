@@ -357,6 +357,9 @@ fn main() {
         canvas.flush();
         window.gl_swap_window();
     }
+    // Its drop leaves no GL context current, which the canvas's drop needs.
+    drop(overlay);
+    let _ = window.gl_make_current(&gl_context);
 }
 
 #[cfg(test)]

@@ -1151,6 +1151,7 @@ dependencies = [
  "walkdir",
  "x11rb",
  "zbus",
+ "zruntime",
 ]
 
 [[package]]
