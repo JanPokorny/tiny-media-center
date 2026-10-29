@@ -48,7 +48,17 @@ x11rb::atom_manager! {
 }
 
 const OWN_CLASS: &str = "tiny-media-center";
-const XF86_HOME_PAGE: u32 = 0x1008ff18;
+// Global keys: keysym and shell command; Home (no command) raises tmc.
+const KEYS: [(u32, &str); 4] = [
+    (0x1008ff18, ""), // XF86HomePage
+    (0x1008ff13, "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0; wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+"),
+    (0x1008ff11, "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),
+    (0x1008ff12, "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),
+];
+// Intentional simplification: dunst shows the volume until tmc draws its own overlay.
+const SHOW_VOLUME: &str = "s=$(wpctl get-volume @DEFAULT_AUDIO_SINK@); v=$(echo \"$s\" | awk '{print int($2*100)}'); \
+    case $s in *MUTED*) t=Muted;; *) t=\"Volume: $v%\";; esac; \
+    notify-send -u low -t 1000 -h string:x-dunst-stack-tag:volume -h int:value:$v \"$t\"";
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Win {
@@ -153,6 +163,8 @@ struct Wm {
     // Bottom first.
     stack: Vec<Window>,
     tx: Sender<Vec<Win>>,
+    // Grabbed keycodes and their KEYS command.
+    keys: Vec<(u8, &'static str)>,
 }
 
 impl Wm {
@@ -175,8 +187,9 @@ impl Wm {
         let (min, max) = (x.conn.setup().min_keycode, x.conn.setup().max_keycode);
         let map = x.conn.get_keyboard_mapping(min, max - min + 1)?.reply()?;
         for (keycode, syms) in (min..=max).zip(map.keysyms.chunks(map.keysyms_per_keycode.into())) {
-            if syms.contains(&XF86_HOME_PAGE) {
+            if let Some(&(_, command)) = KEYS.iter().find(|k| syms.contains(&k.0)) {
                 x.conn.grab_key(false, x.root, ModMask::ANY, keycode, GrabMode::ASYNC, GrabMode::ASYNC)?;
+                self.keys.push((keycode, command));
             }
         }
 
@@ -248,7 +261,15 @@ impl Wm {
                     self.send_list();
                 }
             }
-            Event::KeyPress(_) => self.activate(OWN.load(Relaxed))?,
+            Event::KeyPress(e) => match self.keys.iter().find(|k| k.0 == e.detail) {
+                Some((_, "")) => self.activate(OWN.load(Relaxed))?,
+                Some(&(_, command)) => {
+                    // Waited for on its own thread, so the WM never blocks and no zombie is left.
+                    let script = format!("{command}; {SHOW_VOLUME}");
+                    std::thread::spawn(move || std::process::Command::new("sh").arg("-c").arg(script).status());
+                }
+                None => {}
+            },
             _ => {}
         }
         Ok(())
@@ -377,7 +398,7 @@ pub fn start() -> Receiver<Vec<Win>> {
         std::process::exit(1);
     }
     let (tx, rx) = channel();
-    let mut wm = Wm { x, screen: (0, 0), clients: vec![], stack: vec![], tx };
+    let mut wm = Wm { x, screen: (0, 0), clients: vec![], stack: vec![], tx, keys: vec![] };
     let _ = wm.init();
     std::thread::spawn(move || wm.run());
     rx
