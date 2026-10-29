@@ -62,10 +62,12 @@ pub struct Win {
     pub title: String,
 }
 
-// To the app: the other windows, or the one that was in front when tmc was raised.
+// To the app: the other windows, the one that was in front when tmc was raised,
+// or the Home key pressed while tmc already was.
 pub enum Msg {
     List(Vec<Win>),
     Front(Window),
+    Home,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -267,7 +269,12 @@ impl Wm {
                 }
             }
             Event::KeyPress(e) => match self.keys.iter().find(|k| k.0 == e.detail) {
-                Some((_, "")) => self.raise_own()?,
+                Some((_, "")) => {
+                    if self.stack.last() == Some(&OWN.load(Relaxed)) {
+                        let _ = self.tx.send(Msg::Home);
+                    }
+                    self.raise_own()?
+                }
                 Some(&(_, command)) => {
                     // Waited for on its own thread, so the WM never blocks and no zombie is left.
                     std::thread::spawn(move || overlay::volume_command(command));

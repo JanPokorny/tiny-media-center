@@ -320,6 +320,7 @@ impl App {
             match input {
                 // Both back and confirm leave playback for the paused menu.
                 Input::Confirm | Input::Back => self.pause_player(),
+                Input::Home => self.go_home(),
                 Input::Left => self.seek_player(-5.0),
                 Input::Right => self.seek_player(5.0),
                 Input::Up(_) => self.player.add_sub_delay(-0.5),
@@ -332,10 +333,22 @@ impl App {
                 Input::Down(repeat) => self.menu().navigate_down(!repeat),
                 Input::Confirm => self.navigate_in(),
                 Input::Back => self.navigate_out(),
+                Input::Home => self.go_home(),
                 Input::Letter(c) => self.menu().jump_to_letter(c),
                 Input::Left | Input::Right => {}
             }
         }
+    }
+
+    // Pop everything but Home, closing the open video (position saved) first.
+    fn go_home(&mut self) {
+        if self.video_path().is_some() {
+            self.save_position();
+            self.close_player();
+        }
+        self.stack.truncate(1);
+        self.refresh_home();
+        self.menu().reset_scroll();
     }
 
     fn navigate_in(&mut self) {
@@ -617,15 +630,19 @@ impl App {
     // Take the latest window list from the window manager; leave window frames
     // whose window (or whole list) went away, and keep the selection.
     pub fn pump_windows(&mut self) {
-        let (mut list, mut front) = (None, None);
+        let (mut list, mut front, mut home) = (None, None, false);
         for msg in self.windows_rx.try_iter() {
             match msg {
                 Msg::List(windows) => list = Some(windows),
                 Msg::Front(id) => front = Some(id),
+                Msg::Home => home = true,
             }
         }
         if let Some(windows) = list {
             self.update_windows(windows);
+        }
+        if home {
+            self.handle_input(Input::Home);
         }
         // Not over a video, whose menu and stack stay as they are.
         if let (Some(id), Mode::Browse) = (front, &self.mode) {

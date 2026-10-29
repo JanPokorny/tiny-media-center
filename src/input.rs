@@ -22,6 +22,8 @@ pub enum Input {
     Right,
     Confirm,
     Back,
+    // Straight to the Home menu, from anywhere.
+    Home,
     Letter(char),
 }
 
@@ -61,6 +63,8 @@ pub fn translate(event: &Event) -> Option<Input> {
             Keycode::Return => Some(Input::Confirm),
             // Sleep is the power button on some remotes.
             Keycode::Escape | Keycode::AcBack | Keycode::Sleep => Some(Input::Back),
+            // Tab is the Steam Controller's Menu button.
+            Keycode::Menu | Keycode::Application | Keycode::Tab => Some(Input::Home),
             key => {
                 let name = key.name().to_lowercase();
                 let mut chars = name.chars();
