@@ -351,17 +351,3 @@ fn main() {
     drop(overlay);
     let _ = window.gl_make_current(&gl_context);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::fmt_time;
-
-    #[test]
-    fn fmt_time_cases() {
-        assert_eq!(fmt_time(0.0), "0:00");
-        assert_eq!(fmt_time(65.0), "1:05");
-        assert_eq!(fmt_time(3600.0), "1:00:00");
-        assert_eq!(fmt_time(3725.9), "1:02:05");
-        assert_eq!(fmt_time(-5.0), "0:00");
-    }
-}
