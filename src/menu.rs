@@ -1,7 +1,7 @@
 // The scrolling text menu. Fade falloff is evaluated per item (at its
 // center), which reads identically at these fade band sizes.
 
-use crate::config::{color, Config};
+use crate::config::{color, ACCENT_COLOR, FONT_SIZE, TEXT_COLOR};
 use femtovg::{Baseline, Canvas, Color, FontId, Paint, Renderer};
 
 pub fn text_width<R: Renderer>(canvas: &Canvas<R>, text: &str, paint: &Paint) -> f32 {
@@ -78,12 +78,11 @@ impl<A> Menu<A> {
         &mut self,
         canvas: &mut Canvas<R>,
         font: FontId,
-        config: &Config,
         dt: f32,
         w: f32,
         h: f32,
     ) {
-        let line_h = config.style.font_size * 1.125;
+        let line_h = FONT_SIZE * 1.125;
 
         // Scroll towards the selected item (or the centered list position for
         // short lists); a pending reset starts half a line above the target
@@ -109,7 +108,7 @@ impl<A> Menu<A> {
 
         let paint = Paint::color(Color::white())
             .with_font(&[font])
-            .with_font_size(config.style.font_size)
+            .with_font_size(FONT_SIZE)
             .with_text_baseline(Baseline::Top);
 
         let selected = self.selected;
@@ -131,7 +130,7 @@ impl<A> Menu<A> {
                 1.0
             };
 
-            let rgb = if focused { config.style.accent_color } else { config.style.text_color };
+            let rgb = if focused { ACCENT_COLOR } else { TEXT_COLOR };
             let alpha = if item.dim && !focused { 0.3 } else { 1.0 } * fade;
             let paint = paint.clone().with_color(color(rgb, alpha));
 

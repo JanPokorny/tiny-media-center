@@ -1,5 +1,5 @@
-// Reads $XDG_CONFIG_HOME/tiny-media-center/config.toml,
-// falling back to defaults for anything missing or unparsable.
+// Constants for this TV box, plus the subtitle credentials read from
+// $XDG_CONFIG_HOME/tiny-media-center/config.toml (defaults when missing or unparsable).
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -14,27 +14,12 @@ pub fn config_dir() -> PathBuf {
     PathBuf::from(config_home).join("tiny-media-center")
 }
 
-#[derive(Deserialize)]
-#[serde(default)]
-pub struct Style {
-    pub background_color: [f32; 3],
-    pub text_color: [f32; 3],
-    pub accent_color: [f32; 3],
-    pub dim_color: [f32; 3],
-    pub font_size: f32,
-}
-
-impl Default for Style {
-    fn default() -> Self {
-        Style {
-            background_color: [0.0, 0.0, 0.0],
-            text_color: [1.0, 1.0, 1.0],
-            accent_color: [1.0, 0.8, 0.0],
-            dim_color: [0.5, 0.5, 0.5],
-            font_size: 72.0,
-        }
-    }
-}
+pub const MEDIA_PATH: &str = "/media";
+pub const FONT_SIZE: f32 = 72.0;
+pub const BACKGROUND_COLOR: [f32; 3] = [0.0, 0.0, 0.0];
+pub const TEXT_COLOR: [f32; 3] = [1.0, 1.0, 1.0];
+pub const ACCENT_COLOR: [f32; 3] = [1.0, 0.8, 0.0];
+pub const DIM_COLOR: [f32; 3] = [0.5, 0.5, 0.5];
 
 // Subtitle downloads (see subtitles.rs). OpenSubtitles needs an API key
 // (opensubtitles.com profile > API consumers); the account is optional and
@@ -47,27 +32,21 @@ pub struct Subtitles {
     pub opensubtitles_password: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(default)]
-pub struct Config {
-    pub media_path: String,
-    pub style: Style,
-    pub subtitles: Subtitles,
+struct Config {
+    subtitles: Subtitles,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Config { media_path: ".".into(), style: Style::default(), subtitles: Subtitles::default() }
-    }
-}
-
-pub fn load() -> Config {
+pub fn load() -> Subtitles {
     let path = config_dir().join("config.toml");
     // A missing config is normal (defaults); a broken one gets reported
     // instead of silently falling back.
-    let Ok(s) = std::fs::read_to_string(&path) else { return Config::default() };
-    toml::from_str(&s).unwrap_or_else(|e| {
-        eprintln!("tiny-media-center: ignoring unparsable config {}: {e}", path.display());
-        Config::default()
-    })
+    let Ok(s) = std::fs::read_to_string(&path) else { return Subtitles::default() };
+    toml::from_str::<Config>(&s)
+        .unwrap_or_else(|e| {
+            eprintln!("tiny-media-center: ignoring unparsable config {}: {e}", path.display());
+            Config::default()
+        })
+        .subtitles
 }

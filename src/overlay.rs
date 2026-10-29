@@ -4,7 +4,7 @@
 // without input; windows.rs raises it after every restack. Known ceiling: an
 // override-redirect window mapped later can cover it until the next restack.
 
-use crate::config::{color, Style};
+use crate::config::{color, ACCENT_COLOR, BACKGROUND_COLOR, DIM_COLOR, FONT_SIZE, TEXT_COLOR};
 use crate::menu::text_width;
 use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, Paint, Path, Renderer};
 use sdl3::video::{GLContext, Window, WindowPos};
@@ -277,7 +277,7 @@ impl Overlay {
 
     // Updates the window with what is due. Call once per frame; it only draws
     // when the cards changed, as the window keeps its content.
-    pub fn frame(&mut self, main: &Window, main_gl: &GLContext, style: &Style) {
+    pub fn frame(&mut self, main: &Window, main_gl: &GLContext) {
         let (cards, closed) = {
             let mut state = state();
             state.expire(Instant::now());
@@ -297,26 +297,26 @@ impl Overlay {
         if self.shown && cards == self.cards {
             return;
         }
-        let u = style.font_size * 0.4;
+        let u = FONT_SIZE * 0.4;
         let (w, h) = ((26.0 * u) as u32, (cards.iter().map(Card::height).sum::<f32>() * u).ceil() as u32);
         let _ = self.window.set_size(w, h);
         let x = main.size().0 as i32 - w as i32 - u as i32;
         self.window.set_position(WindowPos::Positioned(x), WindowPos::Positioned(u as i32));
-        self.paint(main, main_gl, style, &cards, (u, w as f32, h as f32));
+        self.paint(main, main_gl, &cards, (u, w as f32, h as f32));
         if !self.shown {
             // Drawn again once mapped, as a window shows nothing before.
             self.window.show();
             crate::windows::raise_overlay();
             self.shown = true;
-            self.paint(main, main_gl, style, &cards, (u, w as f32, h as f32));
+            self.paint(main, main_gl, &cards, (u, w as f32, h as f32));
         }
         self.cards = cards;
     }
 
-    fn paint(&mut self, main: &Window, main_gl: &GLContext, style: &Style, cards: &[Card], (u, w, h): (f32, f32, f32)) {
+    fn paint(&mut self, main: &Window, main_gl: &GLContext, cards: &[Card], (u, w, h): (f32, f32, f32)) {
         let _ = self.window.gl_make_current(&self.gl);
         self.canvas.set_size(w as u32, h as u32, 1.0);
-        draw(&mut self.canvas, self.font, style, cards, u, w, h);
+        draw(&mut self.canvas, self.font, cards, u, w, h);
         self.canvas.flush();
         self.window.gl_swap_window();
         let _ = main.gl_make_current(main_gl);
@@ -333,7 +333,7 @@ fn fit<R: Renderer>(canvas: &Canvas<R>, text: &str, paint: &Paint, max_w: f32) -
     (0..=full.min(120)).rev().map(cut).find(|s| text_width(canvas, s, paint) <= max_w).unwrap_or_default()
 }
 
-fn draw<R: Renderer>(canvas: &mut Canvas<R>, font: FontId, style: &Style, cards: &[Card], u: f32, w: f32, h: f32) {
+fn draw<R: Renderer>(canvas: &mut Canvas<R>, font: FontId, cards: &[Card], u: f32, w: f32, h: f32) {
     let rect = |canvas: &mut Canvas<R>, (x, y, w, h): (f32, f32, f32, f32), rgb: [f32; 3], alpha: f32| {
         let mut path = Path::new();
         path.rect(x, y, w, h);
@@ -342,29 +342,29 @@ fn draw<R: Renderer>(canvas: &mut Canvas<R>, font: FontId, style: &Style, cards:
     let text = |size: f32, rgb: [f32; 3]| {
         Paint::color(color(rgb, 1.0)).with_font(&[font]).with_font_size(size * u).with_text_baseline(Baseline::Top)
     };
-    rect(canvas, (0.0, 0.0, w, h), style.dim_color, 1.0);
-    rect(canvas, (2.0, 2.0, w - 4.0, h - 4.0), style.background_color, 1.0);
+    rect(canvas, (0.0, 0.0, w, h), DIM_COLOR, 1.0);
+    rect(canvas, (2.0, 2.0, w - 4.0, h - 4.0), BACKGROUND_COLOR, 1.0);
     let (x, max_w) = (PAD * 1.6 * u, w - PAD * 3.2 * u);
     let mut y = 0.0;
     for (i, card) in cards.iter().enumerate() {
         if i > 0 {
-            rect(canvas, (x, y, max_w, 1.0), style.dim_color, 0.5);
+            rect(canvas, (x, y, max_w, 1.0), DIM_COLOR, 0.5);
         }
         let mut row = y + PAD * u;
         match card {
             Card::Volume { level, muted } => {
                 let (label, rgb) =
-                    if *muted { ("Muted".into(), style.dim_color) } else { (format!("Volume: {}%", (level * 100.0).round()), style.text_color) };
+                    if *muted { ("Muted".into(), DIM_COLOR) } else { (format!("Volume: {}%", (level * 100.0).round()), TEXT_COLOR) };
                 let _ = canvas.fill_text(x, row, &label, &text(SUMMARY * 0.8, rgb));
                 row += (SUMMARY + 0.2) * u;
-                rect(canvas, (x, row, max_w, BAR * u), style.text_color, 0.2);
-                let fill = if *muted { style.dim_color } else { style.accent_color };
+                rect(canvas, (x, row, max_w, BAR * u), TEXT_COLOR, 0.2);
+                let fill = if *muted { DIM_COLOR } else { ACCENT_COLOR };
                 rect(canvas, (x, row, max_w * level.clamp(0.0, 1.0), BAR * u), fill, 1.0);
             }
             Card::Note { app, summary, body } => {
-                let app = Some((app.as_str(), APP, style.dim_color)).filter(|_| !app.is_empty());
-                let body = body_lines(body).map(|line| (line, BODY, style.dim_color));
-                for (line, size, rgb) in app.into_iter().chain([(summary.as_str(), SUMMARY, style.text_color)]).chain(body) {
+                let app = Some((app.as_str(), APP, DIM_COLOR)).filter(|_| !app.is_empty());
+                let body = body_lines(body).map(|line| (line, BODY, DIM_COLOR));
+                for (line, size, rgb) in app.into_iter().chain([(summary.as_str(), SUMMARY, TEXT_COLOR)]).chain(body) {
                     let paint = text(size * 0.8, rgb);
                     let _ = canvas.fill_text(x, row, fit(canvas, line, &paint, max_w), &paint);
                     row += size * u;

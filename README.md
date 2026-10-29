@@ -22,7 +22,7 @@ On other distros:
    [Releases](https://github.com/JanPokorny/tiny-media-center/releases)
    (x86_64, needs glibc 2.36+ — Debian 12 / Ubuntu 23.04 / Fedora 37 or newer)
 
-Then run it in your media directory.
+Then run it; it browses `/media`.
 
 ## the TV box
 
@@ -38,21 +38,17 @@ goes away. systemd restarts the whole session if X dies.
 
 ## configure
 
-Optional, at `~/.config/tiny-media-center/config.toml`:
+Optional, at `~/.config/tiny-media-center/config.toml`: OpenSubtitles
+credentials for downloading missing subtitles (the API key comes from
+opensubtitles.com profile > API consumers; the account is optional and raises
+the daily download limit from 5 to 20).
 
 ```toml
-media_path = "/media"
-
-[style]
-font_size = 72
-background_color = [0, 0, 0]
-text_color = [1, 1, 1]
-accent_color = [1, 0.8, 0]
-dim_color = [0.5, 0.5, 0.5]
+[subtitles]
+opensubtitles_api_key = ""
+opensubtitles_username = ""
+opensubtitles_password = ""
 ```
-
-The embedded mpv player reads `~/.config/tiny-media-center/mpv/mpv.conf`;
-it is created with defaults on first run and your edits to it are kept.
 
 ## build from source
 

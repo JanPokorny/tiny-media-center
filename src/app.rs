@@ -3,7 +3,7 @@
 // submenus), so there is no parallel path/menu bookkeeping to keep in sync.
 
 use crate::audio::{self, BtDevice, Discovery};
-use crate::config::Config;
+use crate::config::MEDIA_PATH;
 use crate::input::Input;
 use crate::media::{self, Kind, Node, ScanMsg, TrackKind};
 use crate::menu::{Menu, MenuItem};
@@ -84,7 +84,6 @@ pub enum Mode {
 const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(10);
 
 pub struct App {
-    pub config: Config,
     tree: Node,
     pub stack: Vec<Frame>,
     pub mode: Mode,
@@ -105,9 +104,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(config: Config, player: Player, scan_rx: Receiver<ScanMsg>, windows_rx: Receiver<Vec<Win>>) -> App {
+    pub fn new(player: Player, scan_rx: Receiver<ScanMsg>, windows_rx: Receiver<Vec<Win>>) -> App {
         App {
-            config,
             tree: Node::default(),
             stack: vec![Frame::Home { menu: Menu::new(Self::home_items(&[]), 0) }],
             mode: Mode::Scanning,
@@ -441,7 +439,7 @@ impl App {
                     (Some(pos), Some(dur)) if pos < dur - 3.0 => Some(pos),
                     _ => None,
                 };
-                let file = format!("{}/{}", self.config.media_path, child_path.join("/"));
+                let file = format!("{}/{}", MEDIA_PATH, child_path.join("/"));
                 let aid = meta.effective_selection(TrackKind::Audio);
                 let sid = meta.effective_selection(TrackKind::Sub);
                 self.player.play(&file, start, aid.as_deref(), sid.as_deref());
@@ -458,7 +456,7 @@ impl App {
     // Dolphin goes through the systemd user manager: avoids a GL-init
     // segfault, and the game survives this app dying mid-session.
     fn run_external(&mut self, kind: Kind, path: &[String]) {
-        let full = format!("{}/{}", self.config.media_path, path.join("/"));
+        let full = format!("{}/{}", MEDIA_PATH, path.join("/"));
         let name = path.last().cloned().unwrap_or_default();
         let is_game = kind == Kind::WiiGame;
         let errors = self.launch_errors.0.clone();
@@ -496,7 +494,7 @@ impl App {
         let Some(video_path) = self.video_path() else { return };
         let Some(video) = media::get_node_mut(&mut self.tree, &video_path) else { return };
         video.meta.set_selection(kind, id.clone());
-        media::save_metadata(&self.config.media_path, &video_path, &video.meta);
+        media::save_metadata(MEDIA_PATH, &video_path, &video.meta);
         // Apply to the loaded file too, so it takes effect right away.
         self.player.set_track(kind.prop(), &id);
         let items = Self::video_items(video);
@@ -525,7 +523,7 @@ impl App {
         let position = self.player.time_pos;
         if let Some(node) = media::get_node_mut(&mut self.tree, &path) {
             node.meta.position = Some(position);
-            media::save_metadata(&self.config.media_path, &path, &node.meta);
+            media::save_metadata(MEDIA_PATH, &path, &node.meta);
         }
         self.last_pos_save = Instant::now();
     }
