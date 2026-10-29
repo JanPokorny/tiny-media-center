@@ -8,6 +8,7 @@ pub fn text_width<R: Renderer>(canvas: &Canvas<R>, text: &str, paint: &Paint) ->
     canvas.measure_text(0.0, 0.0, text, paint).map_or(0.0, |m| m.width())
 }
 
+#[derive(Clone)]
 pub struct MenuItem<A> {
     pub label: String,
     // Lowercased key used for jump-to-letter and sorting; defaults to the

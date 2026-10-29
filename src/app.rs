@@ -25,8 +25,7 @@ pub enum Action {
     // The device, and whether it needs pairing first.
     ConnectBt(BtDevice, bool),
     PairNew,
-    // The list of other apps' windows, one of them, and what to do to it.
-    Running,
+    // One of other apps' windows (listed on Home), and what to do to it.
     Window(Window),
     Focus(Window),
     Close(Window),
@@ -43,7 +42,6 @@ pub enum Frame {
     Audio { menu: Menu<Action> },
     // Bluetooth discovery runs while this is on the stack.
     Pair { menu: Menu<Action>, scan: Discovery },
-    Running { menu: Menu<Action> },
     // Titled after the window, which can change while this is open.
     Window { id: Window, menu: Menu<Action> },
 }
@@ -57,7 +55,6 @@ impl Frame {
             | Frame::Tracks { menu, .. }
             | Frame::Audio { menu }
             | Frame::Pair { menu, .. }
-            | Frame::Running { menu }
             | Frame::Window { menu, .. } => menu,
         }
     }
@@ -143,7 +140,6 @@ impl App {
                 | Frame::Tracks { .. }
                 | Frame::Audio { .. }
                 | Frame::Pair { .. }
-                | Frame::Running { .. }
                 | Frame::Window { .. } => None,
             })
             .collect()
@@ -184,7 +180,6 @@ impl App {
             Frame::Tracks { kind, .. } => kind.as_str(),
             Frame::Audio { .. } => "Audio",
             Frame::Pair { .. } => "Pair new (searching...)",
-            Frame::Running { .. } => "Running",
             Frame::Window { id, .. } => self.windows.iter().find(|w| w.id == *id).map_or("", |w| &w.title),
         }
     }
@@ -194,25 +189,22 @@ impl App {
         items.iter().position(|i| matches!(&i.action, Action::Open(m) if m == name))
     }
 
-    // Open / Running (when other apps have windows) / Audio [current output]
-    // / Shut down.
+    // Other apps' windows / Open / Audio [current output] / Shut down.
     fn home_items(windows: &[Win]) -> Vec<MenuItem<Action>> {
         let default = audio::default_sink();
         let audio = match audio::sinks().into_iter().find(|s| s.name == default) {
             Some(sink) => format!("Audio [{}]", sink.description),
             None => "Audio".into(),
         };
-        let mut items = vec![MenuItem::new("Open".into(), Action::Browse)];
-        if !windows.is_empty() {
-            items.push(MenuItem::new("Running".into(), Action::Running));
-        }
+        let mut items = Self::window_items(windows);
+        items.push(MenuItem::new("Open".into(), Action::Browse));
         items.push(MenuItem::new(audio, Action::Audio));
         items.push(MenuItem::new("Shut down".into(), Action::Shutdown));
         items
     }
 
-    fn running_items(windows: &[Win]) -> Vec<MenuItem<Action>> {
-        windows.iter().map(|w| MenuItem::new(w.title.clone(), Action::Window(w.id))).collect()
+    fn window_items(windows: &[Win]) -> Vec<MenuItem<Action>> {
+        windows.iter().map(|w| MenuItem::new(format!("* {}", w.title), Action::Window(w.id))).collect()
     }
 
     // Replace a menu's items keeping the selection by action: items come and
@@ -394,15 +386,7 @@ impl App {
                 let text = format!("Connecting to {}...", device.name);
                 self.run_task(text, move || audio::connect(&device, pair));
             }
-            Action::Running => {
-                let menu = Menu::new(Self::running_items(&self.windows), 0);
-                self.stack.push(Frame::Running { menu });
-            }
-            Action::Window(id) => {
-                if let Some((_, window)) = Self::window_frames(&self.windows, id) {
-                    self.stack.push(window);
-                }
-            }
+            Action::Window(id) => self.stack.push(Self::window_frame(id)),
             Action::Focus(id) => windows::activate(id),
             Action::Close(id) => {
                 windows::close(id);
@@ -645,59 +629,38 @@ impl App {
         }
         // Not over a video, whose menu and stack stay as they are.
         if let (Some(id), Mode::Browse) = (front, &self.mode) {
-            if let Some((running, window)) = Self::window_frames(&self.windows, id) {
+            if let Some(selected) = self.windows.iter().position(|w| w.id == id) {
                 self.stack.truncate(1);
-                if let Some(Frame::Home { menu }) = self.stack.first_mut() {
-                    menu.selected = menu.items.iter().position(|i| i.action == Action::Running).unwrap_or(menu.selected);
-                }
-                self.stack.extend([running, window]);
+                self.menu().selected = selected;
+                self.stack.push(Self::window_frame(id));
                 self.menu().reset_scroll();
             }
         }
     }
 
-    // Running with the window selected, and its Focus / Close frame.
-    fn window_frames(windows: &[Win], id: Window) -> Option<(Frame, Frame)> {
-        let selected = windows.iter().position(|w| w.id == id)?;
+    fn window_frame(id: Window) -> Frame {
         let items = vec![MenuItem::new("Focus".into(), Action::Focus(id)), MenuItem::new("Close".into(), Action::Close(id))];
-        Some((
-            Frame::Running { menu: Menu::new(Self::running_items(windows), selected) },
-            Frame::Window { id, menu: Menu::new(items, 0) },
-        ))
+        Frame::Window { id, menu: Menu::new(items, 0) }
     }
 
     fn update_windows(&mut self, windows: Vec<Win>) {
-        let was_empty = self.windows.is_empty();
         self.windows = windows;
         let windows = &self.windows;
         if self.launching.as_ref().is_some_and(|(_, _, old)| windows.iter().any(|w| !old.contains(&w.id))) {
             self.launching = None;
         }
-        let mut popped = false;
-        while self
+        let popped = self
             .stack
-            .pop_if(|f| match f {
-                Frame::Window { id, .. } => !windows.iter().any(|w| w.id == *id),
-                Frame::Running { .. } => windows.is_empty(),
-                _ => false,
-            })
-            .is_some()
-        {
-            popped = true;
-        }
-        let running = self.stack.iter_mut().find_map(|f| match f {
-            Frame::Running { menu } => Some(menu),
-            _ => None,
-        });
-        if let Some(menu) = running {
-            Self::keep_selection(menu, Self::running_items(windows));
+            .pop_if(|f| matches!(f, Frame::Window { id, .. } if !windows.iter().any(|w| w.id == *id)))
+            .is_some();
+        // Swap only the window items: rebuilding the whole of Home runs pactl.
+        if let Some(Frame::Home { menu }) = self.stack.first_mut() {
+            let mut items = Self::window_items(windows);
+            items.extend(menu.items.iter().filter(|i| !matches!(i.action, Action::Window(_))).cloned());
+            Self::keep_selection(menu, items);
         }
         if popped {
             self.menu().reset_scroll();
-        }
-        // Home only shows whether there are windows, and rebuilding it runs pactl.
-        if was_empty != self.windows.is_empty() {
-            self.refresh_home();
         }
     }
 
@@ -785,13 +748,9 @@ mod tests {
     }
 
     #[test]
-    fn builds_the_window_frames() {
-        let win = |id, title: &str| Win { id, title: title.into() };
-        let windows = [win(1, "One"), win(2, "Two")];
-        let (running, window) = App::window_frames(&windows, 2).unwrap();
-        assert!(matches!(&running, Frame::Running { menu } if menu.selected == 1 && menu.items.len() == 2));
+    fn builds_the_window_frame() {
+        let window = App::window_frame(2);
         assert!(matches!(&window, Frame::Window { id: 2, menu } if menu.selected == 0 && menu.items[0].action == Action::Focus(2)));
-        assert!(App::window_frames(&windows, 3).is_none());
     }
 
     #[test]
@@ -869,10 +828,10 @@ mod tests {
     #[test]
     fn keep_selection_follows_window_not_index() {
         let win = |id, title: &str| Win { id, title: title.into() };
-        let mut menu = Menu::new(App::running_items(&[win(1, "a"), win(2, "b"), win(3, "c")]), 1);
-        App::keep_selection(&mut menu, App::running_items(&[win(0, "z"), win(2, "b2"), win(3, "c")]));
+        let mut menu = Menu::new(App::window_items(&[win(1, "a"), win(2, "b"), win(3, "c")]), 1);
+        App::keep_selection(&mut menu, App::window_items(&[win(0, "z"), win(2, "b2"), win(3, "c")]));
         assert_eq!(menu.selected, 1);
-        App::keep_selection(&mut menu, App::running_items(&[win(3, "c")]));
+        App::keep_selection(&mut menu, App::window_items(&[win(3, "c")]));
         assert_eq!(menu.selected, 0); // selected window gone: first item
     }
 
