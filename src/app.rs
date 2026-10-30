@@ -762,12 +762,11 @@ impl App {
         }
         // Not over a video, whose menu and stack stay as they are.
         if let (Some(id), Mode::Browse) = (front, &self.mode) {
-            if let Some(selected) = self.stack[0].menu_mut().items.iter().position(|i| i.action == Action::Window(id)) {
-                self.stack.truncate(1);
+            self.stack.truncate(1);
+            if let Some(selected) = self.menu().items.iter().position(|i| i.action == Action::Window(id)) {
                 self.menu().selected = selected;
-                self.stack.push(Self::window_frame(id));
-                self.menu().reset_scroll();
             }
+            self.menu().reset_scroll();
         }
     }
 
