@@ -115,7 +115,7 @@ def sync():
         fname = sanitise(name) or gid
         if f"{fname}.sh" in want:
             fname += f" ({gid})"
-        want[f"{fname}.sh"] = f"#!/usr/bin/env bash\n{MARK}\nexec '{me}' launch {gid}\n"
+        want[f"{fname}.sh"] = f"#!/usr/bin/env bash\n{MARK}\n# uv (the script's interpreter) comes from mise; the TV session's PATH lacks it.\nPATH=\"$HOME/.local/share/mise/shims:$PATH\" exec '{me}' launch {gid}\n"
     for f in GAMES_DIR.glob("*.sh"):
         if f.name not in want and MARK in f.read_text().splitlines():
             f.unlink()
