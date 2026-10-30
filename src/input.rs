@@ -11,7 +11,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
 pub enum Input {
@@ -57,6 +57,30 @@ pub fn poll(_pump: &mut sdl3::EventPump) -> impl Iterator<Item = Event> {
     })
 }
 
+fn is_steam_comm(comm: &str) -> bool {
+    comm.trim_end() == "steam"
+}
+
+// Steam's desktop layout already turns controller buttons into key events, and
+// it also exposes the pads to SDL, so gamepad buttons would count twice. Cached
+// for 1 s so a /proc scan doesn't run per event.
+fn steam_running() -> bool {
+    static CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    if let Some((at, running)) = *cache {
+        if at.elapsed() < Duration::from_secs(1) {
+            return running;
+        }
+    }
+    let running = std::fs::read_dir("/proc").is_ok_and(|dir| {
+        dir.flatten().any(|e| {
+            std::fs::read_to_string(e.path().join("comm")).is_ok_and(|c| is_steam_comm(&c))
+        })
+    });
+    *cache = Some((Instant::now(), running));
+    running
+}
+
 pub fn translate(event: &Event) -> Option<Input> {
     match event {
         Event::KeyDown { keycode: Some(key), repeat, .. } => match key {
@@ -78,6 +102,7 @@ pub fn translate(event: &Event) -> Option<Input> {
                 }
             }
         },
+        Event::ControllerButtonDown { .. } if steam_running() => None,
         Event::ControllerButtonDown { button, .. } => match button {
             Button::DPadUp => Some(Input::Up(false)),
             Button::DPadDown => Some(Input::Down(false)),
@@ -153,6 +178,14 @@ fn chord_step(held: &mut (bool, bool), code: u16, value: i32) -> bool {
 mod tests {
     use super::*;
     use sdl3::sys::{events::*, gamepad::*};
+
+    #[test]
+    fn steam_comm_matching() {
+        assert!(is_steam_comm("steam\n"));
+        for c in ["steamwebhelper\n", "steam-runtime-l\n", "steam-games\n", "xsteam\n"] {
+            assert!(!is_steam_comm(c));
+        }
+    }
 
     #[test]
     fn chord_fires_once_when_both_held() {
