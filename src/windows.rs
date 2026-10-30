@@ -119,6 +119,12 @@ fn raise(stack: &mut Vec<Window>, w: Window, parent: impl Fn(Window) -> Option<W
     stack.extend(moved.into_iter().map(|m| m.1));
 }
 
+// Closing the top normal window returns to tmc rather than the next client,
+// which may be a launcher's stale window; dialogs fall back to their parent.
+fn returns_to_tmc(was_top: bool, kind: Kind) -> bool {
+    was_top && kind == Kind::Normal
+}
+
 struct X {
     conn: RustConnection,
     root: Window,
@@ -330,9 +336,15 @@ impl Wm {
         }
         // Withdrawn; a BadWindow if it was destroyed.
         self.x.conn.delete_property(window, self.x.atoms.WM_STATE)?;
+        let kind = self.clients.iter().find(|c| c.id == window).map(|c| c.kind);
+        let home = kind.is_some_and(|k| returns_to_tmc(self.stack.last() == Some(&window), k));
         self.clients.retain(|c| c.id != window);
         self.stack.retain(|&w| w != window);
         self.send_list();
+        let own = OWN.load(Relaxed);
+        if home && window != own && self.stack.contains(&own) {
+            return self.activate(own);
+        }
         self.sync()
     }
 
@@ -492,6 +504,13 @@ mod tests {
     fn centers_and_clamps_to_screen() {
         assert_eq!(centered((1920, 1080), (400, 200)), (760, 440));
         assert_eq!(centered((1920, 1080), (2000, 1080)), (0, 0));
+    }
+
+    #[test]
+    fn closing_returns_to_tmc_only_for_top_normal_windows() {
+        assert!(returns_to_tmc(true, Kind::Normal));
+        assert!(!returns_to_tmc(false, Kind::Normal));
+        assert!(!returns_to_tmc(true, Kind::Dialog));
     }
 
     #[test]
