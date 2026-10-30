@@ -17,7 +17,7 @@ mod windows;
 use app::{App, Mode};
 use background::Background;
 use config::{color, ACCENT_COLOR, BACKGROUND_COLOR, DIM_COLOR, FONT_SIZE, MEDIA_PATH, TEXT_COLOR};
-use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, Paint, Path, Renderer};
+use femtovg::{renderer::OpenGl, Baseline, Canvas, FontId, ImageFlags, Paint, Path, PixelFormat, Renderer};
 use menu::{draw_text, text_width};
 use player::Player;
 use sdl3::event::{Event, WindowEvent};
@@ -138,6 +138,8 @@ fn main() {
     let mut app = App::new(player, rx, windows);
 
     let (w, h) = window.size();
+    let layer_flags = ImageFlags::FLIP_Y | ImageFlags::PREMULTIPLIED;
+    let mut menu_layer = canvas.create_image_empty(w as usize, h as usize, PixelFormat::Rgba8, layer_flags).unwrap();
     let mut background = Background::new(w as f32, h as f32);
     let mut scroll_buffer = 0.0_f32;
     let mut gamepads = vec![];
@@ -211,6 +213,10 @@ fn main() {
         last_frame = Instant::now();
         let (w, h) = window.size();
         let (wf, hf) = (w as f32, h as f32);
+        if canvas.image_size(menu_layer).ok() != Some((w as usize, h as usize)) {
+            canvas.delete_image(menu_layer);
+            menu_layer = canvas.create_image_empty(w as usize, h as usize, PixelFormat::Rgba8, layer_flags).unwrap();
+        }
 
         if let &Mode::Playing { osd_until } = &app.mode {
             if app.player.poll_ended() {
@@ -301,7 +307,7 @@ fn main() {
             } else {
                 background.draw(&mut canvas, dt, wf, hf);
             }
-            app.stack.last_mut().unwrap().menu_mut().draw(&mut canvas, font, dt, wf, hf);
+            app.stack.last_mut().unwrap().menu_mut().draw(&mut canvas, font, menu_layer, dt, wf, hf);
 
             draw_text(&mut canvas, 0.0, 0.0, app.title(), &dim_paint, 1.0);
 

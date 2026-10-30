@@ -1,8 +1,8 @@
-// The scrolling text menu. Fade falloff is evaluated per item (at its
-// center), which reads identically at these fade band sizes.
+// The scrolling text menu. A scrolling list is drawn into an offscreen layer
+// whose top and bottom edges are faded out with an alpha-mask gradient.
 
 use crate::config::{color, ACCENT_COLOR, DIM_COLOR, FONT_SIZE, TEXT_COLOR};
-use femtovg::{Baseline, Canvas, Color, FontId, Paint, Path, Renderer};
+use femtovg::{Baseline, Canvas, Color, CompositeOperation, FontId, ImageId, Paint, Path, RenderTarget, Renderer};
 
 pub fn text_width<R: Renderer>(canvas: &Canvas<R>, text: &str, paint: &Paint) -> f32 {
     canvas.measure_text(0.0, 0.0, text, paint).map_or(0.0, |m| m.width())
@@ -135,6 +135,7 @@ impl<A> Menu<A> {
         &mut self,
         canvas: &mut Canvas<R>,
         font: FontId,
+        layer: ImageId,
         dt: f32,
         w: f32,
         h: f32,
@@ -163,7 +164,10 @@ impl<A> Menu<A> {
         // 30%. Applied only to lists that actually scroll -- a short centered
         // list has no off-screen continuation to hint at.
         let header_h = line_h * 1.2;
-        let (fade_top, fade_bot) = (h * 0.3 - header_h, h * 0.3);
+        if scrolling {
+            canvas.set_render_target(RenderTarget::Image(layer));
+            canvas.clear_rect(0, 0, w as u32, h as u32, Color::rgbaf(0.0, 0.0, 0.0, 0.0));
+        }
 
         let paint = Paint::color(Color::white())
             .with_font(&[font])
@@ -178,33 +182,22 @@ impl<A> Menu<A> {
             }
             let focused = i == selected;
 
-            let fade = if scrolling {
-                let y_mid = item_y + item_h / 2.0;
-                let mut fade = ((y_mid - header_h) / fade_top).min(1.0);
-                if y_mid > h - fade_bot {
-                    fade = fade.min((h - y_mid) / fade_bot);
-                }
-                fade.clamp(0.0, 1.0)
-            } else {
-                1.0
-            };
-
             let rgb = if focused { ACCENT_COLOR } else { TEXT_COLOR };
-            let alpha = if item.dim && !focused { 0.3 } else { 1.0 } * fade;
+            let alpha = if item.dim && !focused { 0.3 } else { 1.0 };
             let paint = paint.clone().with_color(color(rgb, alpha));
 
             let x = 50.0;
             let prefix = if focused { "> " } else { "  " };
             if item.heading {
                 // Small dim title at the bottom of its row, a thin line after it.
-                let small = paint.clone().with_font_size(FONT_SIZE * 0.45).with_color(color(DIM_COLOR, fade));
+                let small = paint.clone().with_font_size(FONT_SIZE * 0.45).with_color(color(DIM_COLOR, 1.0));
                 let text_x = x + text_width(canvas, prefix, &paint);
                 let text_y = item_y + item_h - FONT_SIZE * 0.45 * 1.15;
-                draw_text(canvas, text_x, text_y, &item.label, &small, fade);
+                draw_text(canvas, text_x, text_y, &item.label, &small, 1.0);
                 let line_x = text_x + text_width(canvas, &item.label, &small) + 20.0;
                 let mut line = Path::new();
                 line.rect(line_x, text_y + FONT_SIZE * 0.45 * 0.55, (w - x - line_x).max(0.0), 2.0);
-                canvas.fill_path(&line, &Paint::color(color(DIM_COLOR, 0.4 * fade)));
+                canvas.fill_path(&line, &Paint::color(color(DIM_COLOR, 0.4)));
                 continue;
             }
             draw_text(canvas, x, item_y, prefix, &paint, alpha);
@@ -221,6 +214,26 @@ impl<A> Menu<A> {
             canvas.scale(item.squish, 1.0);
             draw_text(canvas, 0.0, 0.0, &item.label, &paint, alpha);
             canvas.restore();
+        }
+
+        if scrolling {
+            let span = h - header_h;
+            let stops = [(0.0, 0.0), ((h * 0.3 - header_h) / span, 1.0), (0.7, 1.0), (1.0, 0.0)];
+            let mask = Paint::linear_gradient_stops(
+                0.0,
+                header_h,
+                0.0,
+                h,
+                stops.map(|(at, alpha)| (at, Color::rgbaf(0.0, 0.0, 0.0, alpha))),
+            );
+            let mut rect = Path::new();
+            rect.rect(0.0, 0.0, w, h);
+            canvas.save();
+            canvas.global_composite_operation(CompositeOperation::DestinationIn);
+            canvas.fill_path(&rect, &mask);
+            canvas.restore();
+            canvas.set_render_target(RenderTarget::Screen);
+            canvas.fill_path(&rect, &Paint::image(layer, 0.0, 0.0, w, h, 0.0, 1.0));
         }
     }
 }
