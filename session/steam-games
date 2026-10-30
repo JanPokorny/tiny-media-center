@@ -1,0 +1,218 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["websockets"]
+# ///
+"""Steam games as tmc launchers in /media/Games.
+
+steam-games sync                  rebuild /media/Games/*.sh
+steam-games launch [--dry-run] ID start Steam if needed, then run/stream the game
+steam-games --self-test
+"""
+import json, os, re, socket, subprocess, sys, time, urllib.request
+from pathlib import Path
+
+from websockets.sync.client import connect
+
+HOME = Path.home()
+STEAM = HOME / ".local/share/Steam"
+GAMES_DIR = Path("/media/Games")
+CACHE = HOME / ".cache/steam-games/remote.json"
+SEED = HOME / "steam-stream-proto/list.jsonl"
+MARK = "# steam-games"
+PC_CLIENT, PC_IP, PC_MAC, PC_PORT = "14490160863868437655", "192.168.0.111", "2c:f0:5d:83:a7:93", 27036
+CEF = "http://127.0.0.1:8080/json"
+SKIP = re.compile(r"^(Proton|Steam Linux Runtime|Steamworks)")
+LIST_JS = """appStore.allApps.filter(o=>o.app_type!=4&&o.per_client_data.some(p=>p.installed)).map(o=>({
+  gameid:o.GetGameID(),appid:o.appid,name:o.display_name,hosts:o.per_client_data.filter(p=>p.installed).map(p=>p.clientid)}))"""
+
+
+def vdf(text):
+    root = stack = [{}]
+    key = None
+    for s, brace in re.findall(r'"((?:[^"\\]|\\.)*)"|([{}])', text):
+        if brace == "{":
+            d = stack[-1][key] = {}
+            stack.append(d)
+            key = None
+        elif brace == "}":
+            stack.pop()
+        elif key is None:
+            key = re.sub(r"\\(.)", r"\1", s)
+        else:
+            stack[-1][key] = re.sub(r"\\(.)", r"\1", s)
+            key = None
+    return root[0]
+
+
+def sanitise(name):
+    return re.sub(r"[/\x00-\x1f]", "-", name).strip().lstrip(".")
+
+
+def local_games():
+    games = {}
+    for folder in vdf((STEAM / "steamapps/libraryfolders.vdf").read_text())["libraryfolders"].values():
+        for acf in Path(folder["path"], "steamapps").glob("appmanifest_*.acf"):
+            s = vdf(acf.read_text())["AppState"]
+            if int(s.get("StateFlags", 0)) & 4 and not SKIP.match(s["name"]):
+                games[s["appid"]] = s["name"]
+    return games
+
+
+def cef_eval(expr):
+    targets = json.load(urllib.request.urlopen(CEF, timeout=3))
+    t = next(t for t in targets if t["title"] == "SharedJSContext")
+    with connect(t["webSocketDebuggerUrl"], max_size=None) as ws:
+        ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
+                            "params": {"expression": expr, "awaitPromise": True, "returnByValue": True}}))
+        r = json.loads(ws.recv())["result"]
+    if "exceptionDetails" in r:
+        raise RuntimeError(r["exceptionDetails"])
+    return r["result"].get("value")
+
+
+def cef_up():
+    try:
+        cef_eval("1")
+        return True
+    except Exception:
+        return False
+
+
+def steam_list():
+    return cef_eval(LIST_JS)
+
+
+def remote_from_list(apps, local_ids):
+    return {a["gameid"]: a["name"] for a in apps
+            if PC_CLIENT in a["hosts"] and "0" not in a["hosts"] and a["gameid"] not in local_ids and not SKIP.match(a["name"])}
+
+
+def remote_games(local):
+    if not CACHE.exists() and SEED.exists():
+        rows = [json.loads(l) for l in SEED.read_text().splitlines()]
+        seeded = {r["gameid"]: r["name"] for r in rows if "puf-pc" in r["hosts"] and "This machine" not in r["hosts"]}
+        CACHE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE.write_text(json.dumps(seeded))
+    try:
+        apps = steam_list()
+        # Ceiling: while the PC is asleep it has no entries, so keep the cache; removals there are missed.
+        if any(PC_CLIENT in a["hosts"] for a in apps):
+            CACHE.parent.mkdir(parents=True, exist_ok=True)
+            CACHE.write_text(json.dumps(remote_from_list(apps, set(local))))
+    except Exception:
+        pass
+    remote = json.loads(CACHE.read_text()) if CACHE.exists() else {}
+    return {k: v for k, v in remote.items() if k not in local}
+
+
+def sync():
+    local = local_games()
+    games = {**remote_games(local), **local}
+    me = Path(__file__).resolve()
+    GAMES_DIR.mkdir(exist_ok=True)
+    want = {}
+    for gid, name in sorted(games.items(), key=lambda kv: kv[1].lower()):
+        fname = sanitise(name) or gid
+        if f"{fname}.sh" in want:
+            fname += f" ({gid})"
+        want[f"{fname}.sh"] = f"#!/usr/bin/env bash\n{MARK}\nexec '{me}' launch {gid}\n"
+    for f in GAMES_DIR.glob("*.sh"):
+        if f.name not in want and MARK in f.read_text().splitlines():
+            f.unlink()
+            print("removed", f.name)
+    for fname, body in want.items():
+        f = GAMES_DIR / fname
+        if f.exists() and f.read_text() == body:
+            continue
+        if f.exists() and MARK not in f.read_text().splitlines():
+            print("skipped (not ours):", fname)
+            continue
+        f.write_text(body)
+        print("wrote", fname)
+
+
+def steam_running():
+    return subprocess.run(["pgrep", "-x", "steam"], capture_output=True).returncode == 0
+
+
+def pc_up():
+    try:
+        socket.create_connection((PC_IP, PC_PORT), timeout=2).close()
+        return True
+    except OSError:
+        return False
+
+
+def wait(what, pred, timeout):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        v = pred()
+        if v:
+            return v
+        time.sleep(2)
+    sys.exit(f"steam-games: timed out waiting for {what}")
+
+
+def launch(gid, dry):
+    def do(desc, fn, *a, **kw):
+        print(("would: " if dry else "") + desc)
+        return None if dry else fn(*a, **kw)
+
+    local = local_games()
+    remote = remote_games(local) if gid not in local else {}
+    if gid not in local and gid not in remote:
+        sys.exit(f"steam-games: unknown game {gid}")
+    print(f"{local.get(gid) or remote[gid]}: {'local' if gid in local else 'remote on puf-pc'}")
+
+    running = steam_running()
+    if not running:
+        env = [f"-E{v}={os.environ[v]}" for v in ("DISPLAY", "XAUTHORITY") if v in os.environ]
+        do("start Steam (silent, CEF debugging)", subprocess.run, ["systemd-run", "--user", "--collect", "--unit=steam", *env,
+           "steam", "-silent", "-cef-enable-debugging"], True)
+    cef = (running and cef_up()) or (not running and do("wait for Steam CEF", wait, "Steam CEF", cef_up, 60))
+    print(f"Steam running: {running}, CEF: {'yes' if cef or not running else 'no'}")
+
+    if gid in local:
+        do("steam steam://rungameid/" + gid, subprocess.run, ["steam", f"steam://rungameid/{gid}"], True)
+    else:
+        if not pc_up():
+            do(f"wol {PC_MAC}", subprocess.run, ["wol", PC_MAC], True)
+        do(f"wait for puf-pc Steam on :{PC_PORT}", wait, "puf-pc (Steam on :27036)", pc_up, 90)
+        if running and not cef_up():
+            do("steam steam://rungameid/" + gid + " (no CEF)", subprocess.run, ["steam", f"steam://rungameid/{gid}"], True)
+        else:
+            def entry():
+                try:
+                    return next((a for a in steam_list() if a["gameid"] == gid and PC_CLIENT in a["hosts"]), None)
+                except Exception:
+                    return None
+            app = do("wait for the game on puf-pc in Steam's list", wait, "the game to show up on puf-pc", entry, 60)
+            appid = app["appid"] if app else "<appid>"
+            do(f"SteamClient.Apps.StreamGame({appid}, puf-pc)", cef_eval, f'SteamClient.Apps.StreamGame({appid},"{PC_CLIENT}",-1)')
+    do("sync in the background", subprocess.Popen, [Path(__file__).resolve(), "sync"], stdin=subprocess.DEVNULL,
+       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def self_test():
+    d = vdf('"AppState"\n{\n\t"appid"\t"1"\n\t"name"\t"Say \\"hi\\""\n\t"Depots"\n\t{\n\t\t"2"\n\t\t{\n\t\t\t"size"\t"3"\n\t\t}\n\t}\n\t"StateFlags"\t"4"\n}')
+    assert d == {"AppState": {"appid": "1", "name": 'Say "hi"', "Depots": {"2": {"size": "3"}}, "StateFlags": "4"}}, d
+    assert sanitise(" ../AC/DC: Hell ") == "-AC-DC: Hell", sanitise(" ../AC/DC: Hell ")
+    assert sanitise("/") == "-" and sanitise("  ") == ""
+    apps = [{"gameid": "1", "name": "A", "hosts": [PC_CLIENT]}, {"gameid": "2", "name": "B", "hosts": [PC_CLIENT, "0"]},
+            {"gameid": "3", "name": "Proton 9", "hosts": [PC_CLIENT]}, {"gameid": "4", "name": "D", "hosts": ["0"]}]
+    assert remote_from_list(apps, set()) == {"1": "A"}
+    print("ok")
+
+
+args = sys.argv[1:]
+if args == ["--self-test"]:
+    self_test()
+elif args == ["sync"]:
+    sync()
+elif len(args) in (2, 3) and args[0] == "launch" and (len(args) == 2 or args[1] == "--dry-run"):
+    try:
+        launch(args[-1], len(args) == 3)
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"steam-games: {e}")
+else:
+    sys.exit(__doc__)

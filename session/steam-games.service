@@ -1,0 +1,6 @@
+[Unit]
+Description=Refresh the Steam game launchers in /media/Games
+
+[Service]
+Type=oneshot
+ExecStart=%h/ghq/github.com/JanPokorny/tiny-media-center/session/steam-games sync

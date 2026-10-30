@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch the Steam library for the game launchers
+
+[Path]
+PathChanged=%h/.local/share/Steam/steamapps/libraryfolders.vdf
+PathChanged=%h/.local/share/Steam/config/remoteclients.vdf
+
+[Install]
+WantedBy=default.target
