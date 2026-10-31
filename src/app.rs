@@ -799,7 +799,7 @@ impl App {
                 self.show_notice(message);
             }
         }
-        if self.launching.as_ref().is_some_and(|(_, since, _)| since.elapsed() > Duration::from_secs(30)) {
+        if self.launching.as_ref().is_some_and(|(_, since, _)| since.elapsed() > Duration::from_secs(60)) {
             self.launching = None;
         }
         let Mode::External { rx, .. } = &self.mode else { return };
