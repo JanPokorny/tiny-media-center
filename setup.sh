@@ -17,7 +17,7 @@ system() {
 
     # Never remove or downgrade these (SSH/network/auth/package manager, what
     # Paseo and the session need): every dnf removal is simulated against it first.
-    protected='^(openssh.*|firewalld.*|NetworkManager.*|tailscale|systemd.*|pam|pam-.*|authselect.*|polkit.*|sudo|dnf.*|libdnf.*|python3-libdnf.*|rpm|rpm-.*|ca-certificates|openssl.*|curl|libcurl.*|glibc.*|fprintd.*|libfprint|sssd.*|xorg-x11-.*|picom|bluez.*|pipewire.*|wireplumber.*|pulseaudio-utils|flatpak.*|xdg-desktop-portal|xdg-desktop-portal-gtk|steam|dolphin-emu|mpv-libs|SDL3.*|mesa.*|.*intel-media-driver|libva.*|ImageMagick.*|xprop|xrdb|jellyfin.*|wpa_supplicant|chrony|dbus.*|fish)$'
+    protected='^(openssh.*|firewalld.*|NetworkManager.*|tailscale|systemd.*|pam|pam-.*|authselect.*|polkit.*|sudo|dnf.*|libdnf.*|python3-libdnf.*|rpm|rpm-.*|ca-certificates|openssl.*|curl|libcurl.*|glibc.*|fprintd.*|libfprint|sssd.*|xorg-x11-.*|picom|bluez.*|pipewire.*|wireplumber.*|pulseaudio-utils|flatpak.*|xdg-desktop-portal|xdg-desktop-portal-gtk|steam|dolphin-emu|mpv-libs|SDL3.*|mesa.*|.*intel-media-driver|libva.*|ImageMagick.*|xprop|xrdb|wpa_supplicant|chrony|dbus.*|fish)$'
     preflight() {
         local out rows bad
         out=$(LC_ALL=C dnf "$@" --assumeno 2>&1) || true
@@ -55,6 +55,9 @@ system() {
     echo "== flatpaks"
     flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
     flatpak install --system -y flathub com.valvesoftware.SteamLink rocks.shy.VacuumTube
+    # Extension Manager is useless without GNOME Shell.
+    flatpak uninstall -y --noninteractive com.mattjakeman.ExtensionManager 2>/dev/null || true
+    flatpak uninstall -y --noninteractive --unused
 
     echo "== automatic updates (apply all, never reboot)"
     printf '[commands]\napply_updates = yes\nupgrade_type = default\nreboot = never\n' > /etc/dnf/automatic.conf
@@ -101,6 +104,8 @@ system() {
         ibus-typing-booster python3-ibus
         # Other window managers and notification/Bluetooth UIs (tmc is all of them)
         openbox openbox-libs dunst blueman
+        # Jellyfin media server
+        jellyfin jellyfin-server jellyfin-web jellyfin-firewalld
     )
     mapfile -t todo < <(rpm -q --qf '%{NAME}\n' "${remove[@]}" | grep -v ' is not installed' || true)
     echo "== removing ${#todo[@]} of ${#remove[@]} listed packages still installed"
@@ -109,9 +114,12 @@ system() {
         # the list, so every other protected.d entry (and dnf5) stays protected.
         dnf_protected="--setopt=protected_packages=,dnf5,$(grep -hvxE '#.*|[[:space:]]*|gnome-shell' /etc/dnf/protected.d/*.conf | paste -sd,)"
         preflight remove --noautoremove "$dnf_protected" "${todo[@]}"
+        systemctl disable --now jellyfin.service 2>/dev/null || true
         # --noautoremove: autoremove would also take pactl and much else.
         dnf remove -y --noautoremove "$dnf_protected" "${todo[@]}"
     fi
+    # Per-user copies (user section) take precedence over these system-wide ones.
+    rm -f /usr/local/share/dbus-1/services/{org.freedesktop.secrets,org.freedesktop.impl.portal.Secret,org.gnome.keyring}.service
 
     echo
     echo "==================== SANITY ===================="
