@@ -12,7 +12,7 @@
 for f in /etc/X11/xinit/xinitrc.d/?*.sh; do . "$f"; done
 
 # TV UI scaling (must run before apps launch)
-xrdb -merge ~/.Xresources
+xrdb -merge "$(dirname "$0")/Xresources"
 
 # Children must not outlive the session; xinit HUPs us when X goes away.
 trap 'kill $(jobs -p) 2>/dev/null' EXIT

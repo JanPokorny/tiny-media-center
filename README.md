@@ -27,14 +27,23 @@ Then run it; it browses `/media`.
 ## the TV box
 
 On the author's TV box tmc is the whole X11 desktop, with no display manager
-or other window manager. At boot, the system unit `tmc-session.service`
-(written by a one-off root script outside this repo) opens a logind session
-for `tv` on tty1 and runs
-`startx ~/ghq/github.com/JanPokorny/tiny-media-center/session/tmc-session`.
-[session/tmc-session](session/tmc-session) starts picom, then restarts
-tmc (the window manager, which also shows the volume pop-up and
+or other window manager. At boot, the system unit
+[session/tmc-session.service](session/tmc-session.service) opens a logind
+session for `tv` on tty1 and runs [session/start-x](session/start-x), which
+starts X and [session/tmc-session](session/tmc-session). That starts picom,
+then restarts tmc (the window manager, which also shows the volume pop-up and
 notifications, and is the Bluetooth pairing agent) from `/media` until X
 goes away. systemd restarts the whole session if X dies.
+
+### Setting up the box
+
+Everything that configures the box lives in this repo and is applied by
+[setup.sh](setup.sh) (rerunnable; `./setup.sh system` as root or via sudo,
+`./setup.sh user` as `tv`, no argument for both): packages (installs what the
+session needs, removes GNOME), the session unit, automatic dnf updates, Flatpaks,
+and `tv`'s config symlinked from the repo (WirePlumber, the
+[session/media](session/media) launchers into `/media`, the Steam library
+watcher). It never reboots or restarts the session: reboot afterwards.
 
 ## configure
 
@@ -53,7 +62,7 @@ opensubtitles_password = ""
 ## build from source
 
 `cargo build --release` — needs libmpv and SDL3 headers (Fedora:
-`dnf install mpv-devel SDL3-devel`; `./setup.sh` installs everything). It
+`dnf install mpv-devel SDL3-devel`; `./setup.sh` installs everything on the box). It
 links the system SDL3; `--features vendored-sdl` compiles SDL3 from source
 and links it statically instead (needs cmake and SDL's
 [Linux build dependencies](https://wiki.libsdl.org/SDL3/README-linux); this

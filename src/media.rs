@@ -348,7 +348,9 @@ fn affects_listing(root: &Path, event: &notify::Event) -> bool {
 fn walk(media_path: &str, startup: bool, tx: &Sender<ScanMsg>) -> (Vec<Vec<String>>, Option<Duration>) {
     let mut pending: Vec<Vec<String>> = vec![];
     let mut retry: Option<Duration> = None;
+    // follow_links: setup.sh symlinks the hand-made launchers into the media dir
     for entry in walkdir::WalkDir::new(media_path)
+        .follow_links(true)
         .into_iter()
         .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.') || e.depth() == 0)
         .filter_map(|e| e.ok())
@@ -524,6 +526,20 @@ mod tests {
         assert!(!affects(rename, "/m/.movie.mkv.x1y2"));
         assert!(!affects(Access(AccessKind::Open(AccessMode::Read)), "/m/movie.mkv"));
         assert!(!affects(Create(CreateKind::Folder), "/other/dir"));
+    }
+
+    #[test]
+    fn walk_lists_symlinked_scripts() {
+        let dir = std::env::temp_dir().join(format!("tmc-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/Steam.sh"), "").unwrap();
+        std::os::unix::fs::symlink(dir.join("src/Steam.sh"), dir.join("Steam.sh")).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        walk(dir.to_str().unwrap(), false, &tx);
+        let listed: Vec<_> = rx.try_iter().filter_map(|m| if let ScanMsg::Entry { parts, kind, .. } = m { Some((parts, kind)) } else { None }).collect();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(listed.contains(&(path(&["Steam.sh"]), Kind::Script)));
     }
 
     #[test]
