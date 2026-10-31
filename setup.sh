@@ -63,6 +63,8 @@ system() {
     echo "== session unit (a copy: SELinux rejects units labelled user_home_t)"
     install -m 644 "$repo_dir/session/tmc-session.service" /etc/systemd/system/tmc-session.service
     restorecon -F /etc/systemd/system/tmc-session.service
+    # Drop-in from an earlier one-off fix; the repo unit now has the same ExecStart.
+    rm -rf /etc/systemd/system/tmc-session.service.d
     systemctl daemon-reload
     systemctl enable tmc-session.service
     systemctl set-default graphical.target
