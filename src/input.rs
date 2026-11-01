@@ -3,7 +3,7 @@
 // bindings go in this table instead of per-device match arms in the loop.
 
 use sdl3::event::Event;
-use sdl3::gamepad::Button;
+use sdl3::gamepad::{Axis, Button};
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
 use std::collections::HashSet;
@@ -79,6 +79,68 @@ fn steam_running() -> bool {
     });
     *cache = Some((Instant::now(), running));
     running
+}
+
+const STICK_ENGAGE: i32 = 19660; // 60% of full scale
+const STICK_RELEASE: i32 = 9830; // 30%
+const STICK_DELAY: Duration = Duration::from_millis(400);
+const STICK_REPEAT: Duration = Duration::from_millis(120);
+
+// Left stick as a D-pad: dominant axis only, with hysteresis, and autorepeat
+// driven by `tick` since a held stick sends no events.
+#[derive(Default)]
+pub struct Stick {
+    x: i32,
+    y: i32,
+    // 0..4 = up, down, left, right.
+    held: Option<usize>,
+    next_repeat: Option<Instant>,
+}
+
+impl Stick {
+    pub fn event(&mut self, event: &Event) {
+        if let Event::ControllerAxisMotion { axis, value, .. } = event {
+            match axis {
+                Axis::LeftX => self.x = *value as i32,
+                Axis::LeftY => self.y = *value as i32,
+                _ => {}
+            }
+        }
+    }
+
+    fn along(&self, dir: usize) -> i32 {
+        [-self.y, self.y, -self.x, self.x][dir]
+    }
+
+    pub fn tick(&mut self, now: Instant) -> Option<Input> {
+        let dominant = match (self.x.abs() > self.y.abs(), self.x < 0, self.y < 0) {
+            (true, true, _) => 2,
+            (true, false, _) => 3,
+            (false, _, true) => 0,
+            (false, _, false) => 1,
+        };
+        let target = if self.along(dominant) > STICK_ENGAGE {
+            Some(dominant)
+        } else {
+            self.held.filter(|&d| self.along(d) >= STICK_RELEASE)
+        };
+        let make = |d: usize, repeat: bool| [Input::Up, Input::Down, Input::Left, Input::Right][d](repeat);
+        if target != self.held {
+            self.held = target;
+            self.next_repeat = target.map(|_| now + STICK_DELAY);
+            return target.map(|d| make(d, false));
+        }
+        let (d, at) = self.held.zip(self.next_repeat)?;
+        (now >= at).then(|| {
+            self.next_repeat = Some(now + STICK_REPEAT);
+            make(d, true)
+        })
+    }
+
+    // Same Steam gating as buttons; state still advances so a release is seen.
+    pub fn poll(&mut self, now: Instant) -> Option<Input> {
+        self.tick(now).filter(|_| !steam_running())
+    }
 }
 
 pub fn translate(event: &Event) -> Option<Input> {
@@ -187,6 +249,57 @@ mod tests {
         for c in ["steamwebhelper\n", "steam-runtime-l\n", "steam-games\n", "xsteam\n"] {
             assert!(!is_steam_comm(c));
         }
+    }
+
+    fn stick(x: i32, y: i32) -> Stick {
+        Stick { x, y, ..Default::default() }
+    }
+
+    fn name(i: Option<Input>) -> &'static str {
+        match i {
+            Some(Input::Up(false)) => "up",
+            Some(Input::Up(true)) => "up-repeat",
+            Some(Input::Down(false)) => "down",
+            Some(Input::Left(false)) => "left",
+            Some(Input::Right(false)) => "right",
+            Some(Input::Right(true)) => "right-repeat",
+            Some(_) => "other",
+            None => "none",
+        }
+    }
+
+    #[test]
+    fn stick_engage_hysteresis_and_dominant_axis() {
+        let t = Instant::now();
+        let mut s = stick(15000, 0);
+        assert_eq!(name(s.tick(t)), "none"); // below 60%
+        s.x = 25000;
+        s.y = -30000;
+        assert_eq!(name(s.tick(t)), "up"); // dominant axis wins
+        s.y = 0;
+        assert_eq!(name(s.tick(t)), "right"); // direction switch
+        s.x = 12000;
+        assert_eq!(name(s.tick(t)), "none"); // between thresholds: still held
+        s.x = 5000;
+        assert_eq!(name(s.tick(t)), "none"); // released
+        s.x = 25000;
+        assert_eq!(name(s.tick(t)), "right"); // fresh engage
+    }
+
+    #[test]
+    fn stick_repeat_timing() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut s = stick(32767, 0);
+        assert_eq!(name(s.tick(t)), "right");
+        assert_eq!(name(s.tick(t + ms(399))), "none");
+        assert_eq!(name(s.tick(t + ms(400))), "right-repeat");
+        assert_eq!(name(s.tick(t + ms(519))), "none");
+        assert_eq!(name(s.tick(t + ms(520))), "right-repeat");
+        s.x = 0;
+        assert_eq!(name(s.tick(t + ms(700))), "none");
+        s.y = 32767;
+        assert_eq!(name(s.tick(t + ms(710))), "down"); // repeat timer reset
     }
 
     #[test]

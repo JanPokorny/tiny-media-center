@@ -148,6 +148,7 @@ fn main() {
     let mut scroll_buffer = 0.0_f32;
     let mut gamepads = vec![];
     let mut event_pump = sdl.event_pump().unwrap();
+    let mut stick = input::Stick::default();
     let mut last_frame = Instant::now();
 
     'running: loop {
@@ -176,6 +177,7 @@ fn main() {
                 }
                 // Coming back from another app: the audio output may have changed.
                 Event::Window { win_event: WindowEvent::FocusGained, .. } => app.refresh_home(),
+                Event::ControllerAxisMotion { .. } => stick.event(&event),
                 _ if busy => {}
                 Event::MouseWheel { y, .. } if !playing => {
                     // One wheel notch (y = ±1) per menu step; the buffer
@@ -198,6 +200,12 @@ fn main() {
                         app.handle_input(input);
                     }
                 }
+            }
+        }
+
+        if !busy {
+            if let Some(input) = stick.poll(Instant::now()) {
+                app.handle_input(input);
             }
         }
 
