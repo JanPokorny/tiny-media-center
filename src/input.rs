@@ -130,7 +130,9 @@ pub fn watch_controller_chord() {
         for path in paths {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let is_controller =
-                name.starts_with("usb-Valve_Software_Steam_Controller") && name.ends_with("-event-kbd");
+                name.starts_with("usb-Valve_Software_Steam_Controller")
+                    // hid-steam (Linux 7.3+) merges each slot's keyboard into its mouse node.
+                    && (name.ends_with("-event-kbd") || name.ends_with("-event-mouse"));
             if is_controller && watched.lock().unwrap().insert(path.clone()) {
                 let watched = watched.clone();
                 std::thread::spawn(move || {
