@@ -105,6 +105,10 @@ fn main() {
     let _ = std::fs::create_dir_all(&mpv_dir);
     let _ = std::fs::write(mpv_dir.join("subfont.ttf"), FONT);
 
+    // SDL's HIDAPI Steam Controller driver grabs the controller's hidraw and
+    // turns its keyboard/mouse (lizard) mode off; read gamepads via evdev
+    // instead, so hid-steam keeps lizard mode (and its hold-Menu toggle).
+    sdl3::hint::set("SDL_JOYSTICK_HIDAPI", "0");
     let sdl = sdl3::init().unwrap();
     let video = sdl.video().unwrap();
     // femtovg fills concave paths (e.g. the starfield dots) via the stencil
