@@ -98,7 +98,6 @@ fn main() {
     // Before SDL looks for a window manager and maps its window.
     let windows = windows::start();
     let subtitles = config::load();
-    input::watch_controller_chord();
 
     // mpv finds the subtitle/OSD font as subfont.ttf in its config dir (~~).
     let mpv_dir = config::config_dir().join("mpv");

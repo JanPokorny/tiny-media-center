@@ -49,9 +49,12 @@ x11rb::atom_manager! {
 }
 
 const OWN_CLASS: &str = "tiny-media-center";
-// Global keys: keysym and shell command; Home (no command) raises tmc.
-const KEYS: [(u32, &str); 4] = [
+// Global keys: keysym and shell command; Home (no command) raises tmc. Super
+// is the Steam Controller's back grip under Steam's desktop layout.
+const KEYS: [(u32, &str); 6] = [
     (0x1008ff18, ""), // XF86HomePage
+    (0xffeb, ""),     // Super_L
+    (0xffec, ""),     // Super_R
     (0x1008ff13, "wpctl set-mute @DEFAULT_AUDIO_SINK@ 0; wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+"),
     (0x1008ff11, "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),
     (0x1008ff12, "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),
@@ -517,10 +520,6 @@ pub fn raise_overlay() {
         let _ = x.conn.configure_window(overlay, &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE));
         let _ = x.conn.flush();
     }
-}
-
-pub fn raise_own() {
-    activate(OWN.load(Relaxed));
 }
 
 #[cfg(test)]
