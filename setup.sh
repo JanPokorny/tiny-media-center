@@ -52,6 +52,16 @@ system() {
     # Fedora's autoremove would otherwise take pactl (pulled in as a dependency elsewhere).
     dnf mark user pulseaudio-utils
 
+    echo "== kernel 7.3+ (hid-steam drives the 2026 Steam Controller)"
+    # Fedora 44 still ships 7.2; the Fedora kernel team's vanilla Copr has 7.3.
+    # Remove this block once Fedora's own kernel is 7.3+ (then `dnf copr disable`).
+    newest=$(rpm -q --qf '%{VERSION}\n' kernel-core | sort -V | tail -1)
+    if [[ $(printf '%s\n' 7.3 "$newest" | sort -V | head -1) != 7.3 ]]; then
+        dnf copr enable -y @kernel-vanilla/stable
+        dnf upgrade -y --refresh 'kernel*'
+        echo "   new kernel installed; reboot to use it"
+    fi
+
     echo "== flatpaks"
     flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
     flatpak install --system -y flathub com.valvesoftware.SteamLink rocks.shy.VacuumTube
