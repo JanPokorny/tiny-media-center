@@ -102,6 +102,26 @@ fn classify(types: &[Atom], transient: bool, kinds: &[(Atom, Kind)]) -> Kind {
     known.map_or(if transient { Kind::Dialog } else { Kind::Normal }, |k| k.1)
 }
 
+// ICCCM: WM_HINTS' flags and input fields; no input hint means it takes focus.
+fn input_hint(hints: &[u32]) -> Option<bool> {
+    const INPUT_HINT: u32 = 1;
+    match hints {
+        [flags, input, ..] if flags & INPUT_HINT != 0 => Some(*input != 0),
+        _ => None,
+    }
+}
+
+// WM_NORMAL_HINTS' USPosition | PPosition: the client chose where to be.
+fn asks_position(size_hints: &[u32]) -> bool {
+    size_hints.first().is_some_and(|flags| flags & 0b11 != 0)
+}
+
+// Whether to SetInputFocus and whether to send WM_TAKE_FOCUS. A window that
+// refuses input and can't be asked (Steam's on-screen keyboard) gets neither.
+fn focus_plan(input: Option<bool>, takes_focus: bool) -> (bool, bool) {
+    (input != Some(false), takes_focus)
+}
+
 fn centered(screen: (u16, u16), size: (u16, u16)) -> (i32, i32) {
     let center = |screen: u16, size: u16| ((i32::from(screen) - i32::from(size)) / 2).max(0);
     (center(screen.0, size.0), center(screen.1, size.1))
@@ -165,6 +185,8 @@ struct Client {
     kind: Kind,
     parent: Option<Window>,
     title: String,
+    input: Option<bool>,
+    keeps_position: bool,
 }
 
 struct Wm {
@@ -276,7 +298,7 @@ impl Wm {
             }
             Event::KeyPress(e) => match self.keys.iter().find(|k| k.0 == e.detail) {
                 Some((_, "")) => {
-                    if self.stack.last() == Some(&OWN.load(Relaxed)) {
+                    if self.focus_target().map(|f| f.0) == Some(OWN.load(Relaxed)) {
                         let _ = self.tx.send(Msg::Home);
                     }
                     self.raise_own()?
@@ -319,7 +341,15 @@ impl Wm {
             OWN.store(window, Relaxed);
         }
         x.conn.change_window_attributes(window, &ChangeWindowAttributesAux::new().event_mask(EventMask::PROPERTY_CHANGE))?;
-        let client = Client { id: window, kind, parent, title: x.title(window) };
+        let hints = |property| x.atoms_of(window, property, AtomEnum::ANY);
+        let client = Client {
+            id: window,
+            kind,
+            parent,
+            title: x.title(window),
+            input: input_hint(&hints(AtomEnum::WM_HINTS)),
+            keeps_position: asks_position(&hints(AtomEnum::WM_NORMAL_HINTS)),
+        };
         self.place(&client)?;
         x.conn.change_property32(PropMode::REPLACE, window, a.WM_STATE, a.WM_STATE, &[1, NONE])?; // NormalState
         x.conn.map_window(window)?;
@@ -358,9 +388,13 @@ impl Wm {
         } else {
             // Intentional simplification: centered on the screen, not the
             // parent, as parents are fullscreen.
-            let geometry = x.conn.get_geometry(client.id)?.reply()?;
-            let (left, top) = centered(self.screen, (geometry.width, geometry.height));
-            ConfigureWindowAux::new().x(left).y(top)
+            if client.keeps_position {
+                ConfigureWindowAux::new()
+            } else {
+                let geometry = x.conn.get_geometry(client.id)?.reply()?;
+                let (left, top) = centered(self.screen, (geometry.width, geometry.height));
+                ConfigureWindowAux::new().x(left).y(top)
+            }
         };
         x.conn.configure_window(client.id, &aux.border_width(0))?;
         Ok(())
@@ -374,7 +408,7 @@ impl Wm {
     // Tells the app which window was in front, unless tmc already was.
     fn raise_own(&mut self) -> Result<(), ReplyOrIdError> {
         let own = OWN.load(Relaxed);
-        if let Some(&top) = self.stack.last().filter(|&&t| t != own) {
+        if let Some(top) = self.focus_target().map(|f| f.0).filter(|&t| t != own) {
             let _ = self.tx.send(Msg::Front(top));
         }
         self.activate(own)
@@ -389,16 +423,31 @@ impl Wm {
         raise_overlay();
         let ids: Vec<_> = self.clients.iter().map(|c| c.id).collect();
         x.conn.change_property32(PropMode::REPLACE, x.root, a._NET_CLIENT_LIST, AtomEnum::WINDOW, &ids)?;
-        let top = self.stack.last().copied().unwrap_or(NONE);
+        let focus = self.focus_target();
+        let top = focus.map_or(NONE, |f| f.0);
         x.conn.change_property32(PropMode::REPLACE, x.root, a._NET_ACTIVE_WINDOW, AtomEnum::WINDOW, &[top])?;
-        if top != NONE {
-            x.conn.set_input_focus(InputFocus::POINTER_ROOT, top, CURRENT_TIME)?;
-            if x.atoms_of(top, a.WM_PROTOCOLS, AtomEnum::ATOM).contains(&a.WM_TAKE_FOCUS) {
+        if let Some((top, set, ask)) = focus {
+            if set {
+                x.conn.set_input_focus(InputFocus::POINTER_ROOT, top, CURRENT_TIME)?;
+            }
+            if ask {
                 let event = ClientMessageEvent::new(32, top, a.WM_PROTOCOLS, [a.WM_TAKE_FOCUS, CURRENT_TIME, 0, 0, 0]);
                 x.conn.send_event(false, top, EventMask::NO_EVENT, event)?;
             }
         }
         Ok(())
+    }
+
+    // The topmost window that accepts focus, and its focus_plan. Windows above
+    // it (hints say input=false) are raised but leave the focus where it was.
+    fn focus_target(&self) -> Option<(Window, bool, bool)> {
+        let (x, a) = (self.x, self.x.atoms);
+        self.stack.iter().rev().find_map(|&w| {
+            let input = self.clients.iter().find(|c| c.id == w)?.input;
+            let takes_focus = x.atoms_of(w, a.WM_PROTOCOLS, AtomEnum::ATOM).contains(&a.WM_TAKE_FOCUS);
+            let (set, ask) = focus_plan(input, takes_focus);
+            (set || ask).then_some((w, set, ask))
+        })
     }
 
     // Titled windows other than our own.
@@ -498,6 +547,22 @@ mod tests {
         assert_eq!(classify(&[1], true, &kinds), Kind::Normal); // explicit normal transient
         assert_eq!(classify(&[3, 2], true, &kinds), Kind::Ignore);
         assert_eq!(classify(&[99], true, &kinds), Kind::Dialog);
+    }
+
+    #[test]
+    fn focus_and_position_hints() {
+        assert_eq!(input_hint(&[]), None);
+        assert_eq!(input_hint(&[0, 0]), None); // flag unset: input field is meaningless
+        assert_eq!(input_hint(&[65, 0]), Some(false)); // Steam's on-screen keyboard
+        assert_eq!(input_hint(&[1, 1]), Some(true));
+        assert!(!asks_position(&[]));
+        assert!(!asks_position(&[0b1000]));
+        assert!(asks_position(&[1])); // USPosition
+        assert!(asks_position(&[0b1010])); // PPosition
+        assert_eq!(focus_plan(None, false), (true, false));
+        assert_eq!(focus_plan(Some(true), true), (true, true)); // locally active
+        assert_eq!(focus_plan(Some(false), true), (false, true)); // globally active
+        assert_eq!(focus_plan(Some(false), false), (false, false)); // never focused
     }
 
     #[test]
