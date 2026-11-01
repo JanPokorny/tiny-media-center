@@ -6,6 +6,7 @@ use sdl3::event::Event;
 use sdl3::gamepad::{Axis, Button};
 use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -75,6 +76,41 @@ fn steam_running() -> bool {
     });
     *cache = Some((Instant::now(), running));
     running
+}
+
+// hid-steam's gamepad node exists while the controller is on and Steam isn't
+// running (Steam grabs it).
+fn controller_present(devices: &str) -> bool {
+    devices.lines().any(|l| l.trim_end() == "N: Name=\"Wireless Steam Controller\"")
+}
+
+// True on the scan where the controller turns up with Steam not running. While
+// Steam runs the controller counts as connected, so quitting Steam (which
+// releases the node) isn't taken for a new connection.
+fn should_start_steam(connected: &mut bool, present: bool, running: bool) -> bool {
+    let start = present && !*connected && !running;
+    *connected = present || running;
+    start
+}
+
+// Starts Steam silently, detached and with CEF debugging, like session/steam-games.
+pub fn start_steam_with_controller() {
+    std::thread::spawn(|| {
+        let mut connected = false;
+        loop {
+            let devices = std::fs::read_to_string("/proc/bus/input/devices").unwrap_or_default();
+            if should_start_steam(&mut connected, controller_present(&devices), steam_running()) {
+                eprintln!("tiny-media-center: Steam Controller connected, starting Steam");
+                let env = ["DISPLAY", "XAUTHORITY"].iter().filter_map(|v| Some(format!("-E{v}={}", std::env::var(v).ok()?)));
+                let _ = Command::new("systemd-run")
+                    .args(["--user", "--collect", "--unit=steam"])
+                    .args(env)
+                    .args(["steam", "-silent", "-cef-enable-debugging"])
+                    .status();
+            }
+            std::thread::sleep(Duration::from_secs(3));
+        }
+    });
 }
 
 const STICK_ENGAGE: i32 = 19660; // 60% of full scale
@@ -187,6 +223,23 @@ mod tests {
         for c in ["steamwebhelper\n", "steam-runtime-l\n", "steam-games\n", "xsteam\n"] {
             assert!(!is_steam_comm(c));
         }
+    }
+
+    #[test]
+    fn steam_starts_once_per_controller_connection() {
+        let devices = "N: Name=\"Wireless Steam Controller\"\nN: Name=\"Steam Controller Puck\"\n";
+        assert!(controller_present(devices));
+        assert!(!controller_present("N: Name=\"Microsoft X-Box 360 pad 0\"\n"));
+        let mut c = false;
+        assert!(!should_start_steam(&mut c, false, false)); // off
+        assert!(should_start_steam(&mut c, true, false)); // appears
+        assert!(!should_start_steam(&mut c, true, false)); // debounced while it stays
+        assert!(!should_start_steam(&mut c, false, true)); // Steam grabbed it
+        assert!(!should_start_steam(&mut c, true, false)); // Steam quit, node back: no restart
+        assert!(!should_start_steam(&mut c, false, false)); // switched off
+        assert!(should_start_steam(&mut c, true, false)); // switched on again
+        let mut c = false;
+        assert!(!should_start_steam(&mut c, true, true)); // Steam already running
     }
 
     fn stick(x: i32, y: i32) -> Stick {
