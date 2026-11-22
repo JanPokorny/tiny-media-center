@@ -160,6 +160,20 @@ user() {
     systemctl --user link "$repo_dir/session/steam-games.service" "$repo_dir/session/steam-games.path"
     systemctl --user enable --now steam-games.path
 
+    echo "== dolphin: GameCube pads (Steam Controller port 1, Xbox port 2)"
+    # A copy, not a link: Dolphin replaces the file when it saves.
+    mkdir -p "$cfg/dolphin-emu"
+    cmp -s "$repo_dir/session/dolphin/GCPadNew.ini" "$cfg/dolphin-emu/GCPadNew.ini" || cp "$repo_dir/session/dolphin/GCPadNew.ini" "$cfg/dolphin-emu/GCPadNew.ini"
+    touch "$cfg/dolphin-emu/Dolphin.ini"
+    grep -q '^\[Core\]' "$cfg/dolphin-emu/Dolphin.ini" || printf '[Core]\n' >> "$cfg/dolphin-emu/Dolphin.ini"
+    for port in 0 1; do
+        if grep -q "^SIDevice$port *=" "$cfg/dolphin-emu/Dolphin.ini"; then
+            sed -i "s/^SIDevice$port *=.*/SIDevice$port = 6/" "$cfg/dolphin-emu/Dolphin.ini"
+        else
+            sed -i "/^\[Core\]/a SIDevice$port = 6" "$cfg/dolphin-emu/Dolphin.ini"
+        fi
+    done
+
     echo "== blocking gnome-keyring's D-Bus activation (the package can't go, see system)"
     mkdir -p "$HOME/.local/share/dbus-1/services"
     for name in org.freedesktop.secrets org.freedesktop.impl.portal.Secret org.gnome.keyring; do
