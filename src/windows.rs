@@ -114,9 +114,29 @@ fn input_hint(hints: &[u32]) -> Option<bool> {
     }
 }
 
-// WM_NORMAL_HINTS' USPosition | PPosition: the client chose where to be.
-fn asks_position(size_hints: &[u32]) -> bool {
-    size_hints.first().is_some_and(|flags| flags & 0b11 != 0)
+type Limits = (Option<(u16, u16)>, Option<(u16, u16)>); // min, max size
+
+// WM_NORMAL_HINTS' PMinSize and PMaxSize.
+fn size_limits(size_hints: &[u32]) -> Limits {
+    let limit = |flag: u32, i: usize| match size_hints {
+        [flags, rest @ ..] if flags & flag != 0 && rest.len() > i + 1 => Some((rest[i] as u16, rest[i + 1] as u16)),
+        _ => None,
+    };
+    (limit(1 << 4, 4), limit(1 << 5, 6))
+}
+
+// Dialogs (Qt asks for its minimum size) get at least 2/3 of the screen per
+// axis, within the client's max size, but never below its min size.
+fn dialog_size(screen: (u16, u16), size: (u16, u16), limits: Limits) -> (u16, u16) {
+    let (min, max) = limits;
+    let axis = |screen: u16, size: u16, min: Option<u16>, max: Option<u16>| {
+        let size = size.max((u32::from(screen) * 2 / 3) as u16).min(screen);
+        size.min(max.unwrap_or(u16::MAX)).max(min.unwrap_or(0))
+    };
+    (
+        axis(screen.0, size.0, min.map(|m| m.0), max.map(|m| m.0)),
+        axis(screen.1, size.1, min.map(|m| m.1), max.map(|m| m.1)),
+    )
 }
 
 // Whether to SetInputFocus and whether to send WM_TAKE_FOCUS. A window that
@@ -189,7 +209,7 @@ struct Client {
     parent: Option<Window>,
     title: String,
     input: Option<bool>,
-    keeps_position: bool,
+    limits: Limits,
 }
 
 struct Wm {
@@ -273,6 +293,11 @@ impl Wm {
                         override_redirect: false,
                     };
                     x.conn.send_event(false, e.window, EventMask::STRUCTURE_NOTIFY, notify)?;
+                } else if let Some(client) = self.clients.iter().find(|c| c.id == e.window && c.input != Some(false)) {
+                    let (width, height) = dialog_size(self.screen, (e.width, e.height), client.limits);
+                    let (left, top) = centered(self.screen, (width, height));
+                    let aux = ConfigureWindowAux::new().x(left).y(top).width(u32::from(width)).height(u32::from(height));
+                    x.conn.configure_window(e.window, &aux)?;
                 } else {
                     let aux = ConfigureWindowAux::from_configure_request(&e).sibling(None).stack_mode(None);
                     x.conn.configure_window(e.window, &aux)?;
@@ -351,7 +376,7 @@ impl Wm {
             parent,
             title: x.title(window),
             input: input_hint(&hints(AtomEnum::WM_HINTS)),
-            keeps_position: asks_position(&hints(AtomEnum::WM_NORMAL_HINTS)),
+            limits: size_limits(&hints(AtomEnum::WM_NORMAL_HINTS)),
         };
         self.place(&client)?;
         x.conn.change_property32(PropMode::REPLACE, window, a.WM_STATE, a.WM_STATE, &[1, NONE])?; // NormalState
@@ -389,14 +414,16 @@ impl Wm {
             x.conn.change_property32(PropMode::REPLACE, client.id, a._NET_WM_STATE, AtomEnum::ATOM, &fullscreen)?;
             ConfigureWindowAux::new().x(0).y(0).width(u32::from(width)).height(u32::from(height))
         } else {
+            // Windows that refuse input are overlays and keep what they asked for.
             // Intentional simplification: centered on the screen, not the
             // parent, as parents are fullscreen.
-            if client.keeps_position {
+            if client.input == Some(false) {
                 ConfigureWindowAux::new()
             } else {
                 let geometry = x.conn.get_geometry(client.id)?.reply()?;
-                let (left, top) = centered(self.screen, (geometry.width, geometry.height));
-                ConfigureWindowAux::new().x(left).y(top)
+                let (width, height) = dialog_size(self.screen, (geometry.width, geometry.height), client.limits);
+                let (left, top) = centered(self.screen, (width, height));
+                ConfigureWindowAux::new().x(left).y(top).width(u32::from(width)).height(u32::from(height))
             }
         };
         x.conn.configure_window(client.id, &aux.border_width(0))?;
@@ -554,14 +581,26 @@ mod tests {
         assert_eq!(input_hint(&[0, 0]), None); // flag unset: input field is meaningless
         assert_eq!(input_hint(&[65, 0]), Some(false)); // Steam's on-screen keyboard
         assert_eq!(input_hint(&[1, 1]), Some(true));
-        assert!(!asks_position(&[]));
-        assert!(!asks_position(&[0b1000]));
-        assert!(asks_position(&[1])); // USPosition
-        assert!(asks_position(&[0b1010])); // PPosition
         assert_eq!(focus_plan(None, false), (true, false));
         assert_eq!(focus_plan(Some(true), true), (true, true)); // locally active
         assert_eq!(focus_plan(Some(false), true), (false, true)); // globally active
         assert_eq!(focus_plan(Some(false), false), (false, false)); // never focused
+    }
+
+    #[test]
+    fn dialogs_get_two_thirds_of_the_screen_within_limits() {
+        let screen = (1920, 1080);
+        // Hints: flags, x, y, w, h, min w, min h, max w, max h.
+        assert_eq!(size_limits(&[]), (None, None));
+        assert_eq!(size_limits(&[16, 0, 0, 0, 0, 224, 231, 0, 0]), (Some((224, 231)), None));
+        assert_eq!(size_limits(&[32, 0, 0, 0, 0, 0, 0, 900, 500]), (None, Some((900, 500))));
+        let qt = size_limits(&[3 | 16, 2, 134, 224, 231, 224, 231, 0, 0]);
+        let size = dialog_size(screen, (224, 231), qt);
+        assert_eq!((size, centered(screen, size)), ((1280, 720), (320, 180)));
+        assert_eq!(dialog_size(screen, (1600, 900), (None, None)), (1600, 900));
+        assert_eq!(dialog_size(screen, (3000, 900), (None, None)), (1920, 900));
+        assert_eq!(dialog_size(screen, (300, 300), (None, Some((900, 500)))), (900, 500));
+        assert_eq!(dialog_size(screen, (300, 300), (Some((1400, 100)), Some((900, 500)))), (1400, 500));
     }
 
     #[test]
