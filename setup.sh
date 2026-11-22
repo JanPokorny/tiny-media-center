@@ -164,15 +164,24 @@ user() {
     # A copy, not a link: Dolphin replaces the file when it saves.
     mkdir -p "$cfg/dolphin-emu"
     cmp -s "$repo_dir/session/dolphin/GCPadNew.ini" "$cfg/dolphin-emu/GCPadNew.ini" || cp "$repo_dir/session/dolphin/GCPadNew.ini" "$cfg/dolphin-emu/GCPadNew.ini"
-    touch "$cfg/dolphin-emu/Dolphin.ini"
-    grep -q '^\[Core\]' "$cfg/dolphin-emu/Dolphin.ini" || printf '[Core]\n' >> "$cfg/dolphin-emu/Dolphin.ini"
-    for port in 0 1; do
-        if grep -q "^SIDevice$port *=" "$cfg/dolphin-emu/Dolphin.ini"; then
-            sed -i "s/^SIDevice$port *=.*/SIDevice$port = 6/" "$cfg/dolphin-emu/Dolphin.ini"
+    # Set `key = value` in [section] of Dolphin.ini, adding the section/key if missing.
+    dolphin_set() {
+        local ini="$cfg/dolphin-emu/Dolphin.ini"
+        touch "$ini"
+        grep -q "^\[$1\]" "$ini" || printf '[%s]\n' "$1" >> "$ini"
+        if sed -n "/^\[$1\]/,/^\[/p" "$ini" | grep -q "^$2 *="; then
+            sed -i "/^\[$1\]/,/^\[/ s|^$2 *=.*|$2 = $3|" "$ini"
         else
-            sed -i "/^\[Core\]/a SIDevice$port = 6" "$cfg/dolphin-emu/Dolphin.ini"
+            sed -i "/^\[$1\]/a $2 = $3" "$ini"
         fi
-    done
+    }
+    dolphin_set Core SIDevice0 6
+    dolphin_set Core SIDevice1 6
+    dolphin_set Core EnableCheats True
+    # Games live in /media/Wii and subfolders (e.g. "Just Dance").
+    dolphin_set General ISOPaths 1
+    dolphin_set General ISOPath0 /media/Wii
+    dolphin_set General RecursiveISOPaths True
 
     echo "== blocking gnome-keyring's D-Bus activation (the package can't go, see system)"
     mkdir -p "$HOME/.local/share/dbus-1/services"
