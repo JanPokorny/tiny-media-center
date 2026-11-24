@@ -89,6 +89,16 @@ pub fn bt_audio_devices(paired_only: bool) -> Vec<BtDevice> {
         .collect()
 }
 
+// Paired devices without a sink: disconnected ones, and connected ones whose
+// A2DP endpoint was refused (e.g. busy streaming to a phone), left HFP-only.
+pub fn without_sink(sinks: &[Sink], devices: Vec<BtDevice>) -> Vec<BtDevice> {
+    let has_sink = |d: &BtDevice| {
+        let prefix = format!("bluez_output.{}", d.mac.replace(':', "_"));
+        sinks.iter().any(|s| s.name.starts_with(&prefix))
+    };
+    devices.into_iter().filter(|d| !has_sink(d)).collect()
+}
+
 // `timeout <secs> bluetoothctl ...`; bluetoothctl prints its failure reason
 // as the last stdout line.
 fn btctl(args: &[&str]) -> Result<(), String> {
@@ -105,6 +115,11 @@ fn btctl(args: &[&str]) -> Result<(), String> {
 // its sink to show up and make it the default output.
 pub fn connect(device: &BtDevice, pair: bool) -> Option<String> {
     let mac = device.mac.as_str();
+    // Connected without a sink: drop the link so the connect below starts over.
+    if device.connected {
+        let _ = btctl(&["10", "bluetoothctl", "disconnect", mac]);
+        std::thread::sleep(Duration::from_secs(2));
+    }
     let _pairing = pair.then(|| Pairing::start(mac));
     let trust: &[&str] = &["5", "bluetoothctl", "trust", mac];
     let pair_step: &[&str] = &["30", "bluetoothctl", "pair", mac];
@@ -176,6 +191,14 @@ pub fn discover() -> std::io::Result<Discovery> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn without_sink_lists_devices_lacking_a_bluez_sink() {
+        let dev = |mac: &str, connected| BtDevice { mac: mac.into(), name: mac.into(), paired: true, connected };
+        let sinks = parse_sinks("Name: bluez_output.AA_BB.1\nName: alsa_output.hdmi\n");
+        let left = without_sink(&sinks, vec![dev("AA:BB", true), dev("CC:DD", true), dev("EE:FF", false)]);
+        assert_eq!(left.iter().map(|d| d.mac.as_str()).collect::<Vec<_>>(), ["CC:DD", "EE:FF"]);
+    }
 
     #[test]
     fn parse_sinks_names_and_descriptions() {

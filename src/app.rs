@@ -290,15 +290,16 @@ impl App {
         menu.update_items(items, selected);
     }
 
-    // Current outputs (the default selected), then paired but disconnected
-    // Bluetooth audio devices (dimmed), then Pair new.
+    // Current outputs (the default selected), then paired Bluetooth audio
+    // devices without a sink (dimmed; connected ones reconnect), then Pair new.
     fn audio_menu() -> Menu<Action> {
         let default = audio::default_sink();
         let sinks = audio::sinks();
         let selected = sinks.iter().position(|s| s.name == default).unwrap_or(0);
+        let devices = audio::without_sink(&sinks, audio::bt_audio_devices(true));
         let mut items: Vec<_> =
             sinks.into_iter().map(|s| MenuItem::new(s.description, Action::SetSink(s.name))).collect();
-        for device in audio::bt_audio_devices(true).into_iter().filter(|d| !d.connected) {
+        for device in devices {
             let mut item = MenuItem::new(device.name.clone(), Action::ConnectBt(device, false));
             item.dim = true;
             items.push(item);
