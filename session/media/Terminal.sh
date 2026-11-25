@@ -1,0 +1,1 @@
+exec kitty --directory "$HOME"
