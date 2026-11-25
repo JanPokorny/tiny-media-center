@@ -159,7 +159,8 @@ user() {
     echo "== linking session files"
     mkdir -p "$cfg/wireplumber/wireplumber.conf.d" "$cfg/systemd/user"
     ln -sfn "$repo_dir"/session/wireplumber/*.conf "$cfg/wireplumber/wireplumber.conf.d/"
-    for f in "$repo_dir"/session/media/*.sh; do ln -sfn "$f" "$media/"; done
+    # Launchers and launcher folders (e.g. System) are links into the repo.
+    for f in "$repo_dir"/session/media/*; do ln -sfn "$f" "$media/"; done
     systemctl --user link "$repo_dir/session/steam-games.service" "$repo_dir/session/steam-games.path"
     systemctl --user enable --now steam-games.path
 
