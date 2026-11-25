@@ -1,1 +1,1 @@
-exec kitty --directory "$HOME"
+exec ghostty --working-directory=home
