@@ -3,4 +3,6 @@ Description=Refresh the Steam game launchers in /media/Games
 
 [Service]
 Type=oneshot
+# uv (the script's interpreter) comes from mise; the user manager's PATH lacks it.
+Environment=PATH=%h/.local/share/mise/shims:/usr/local/bin:/usr/bin
 ExecStart=%h/ghq/github.com/JanPokorny/tiny-media-center/session/steam-games sync
