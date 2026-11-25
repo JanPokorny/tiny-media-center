@@ -37,13 +37,13 @@ system() {
     # can't drift), gcc/curl for mise; mpv-libs (libmpv.so.2, the embedded
     # player); pactl and bluetoothctl for the audio menu; X, compositor and
     # xauth/xinit/setpriv for session/start-x; wol and flatpak for the /media
-    # launchers; dnf5 automatic updates.
+    # launchers; nmtui for network setup from the Terminal; dnf5 automatic updates.
     dnf install -y \
         gcc git-core make pkgconf-pkg-config curl \
         'pkgconfig(mpv)' 'pkgconfig(sdl3)' \
         mpv-libs pulseaudio-utils bluez \
         xorg-x11-server-Xorg xorg-x11-drv-libinput xorg-x11-xinit xorg-x11-xauth xrdb xprop picom \
-        wol flatpak firefox dnf5-plugin-automatic
+        wol flatpak firefox NetworkManager-tui dnf5-plugin-automatic
     # Ghostty (Terminal launcher) isn't in Fedora; the Copr its docs point to.
     dnf copr enable -y scottames/ghostty
     dnf install -y ghostty
